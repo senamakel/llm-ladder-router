@@ -105,7 +105,7 @@ start() {
         sleep 0.1
     done
 
-    echo "server did not answer on $address within 10s; last lines:" >&2
+    echo "server did not answer on $address within 90s; last lines:" >&2
     tail -20 "$logfile" >&2
     return 1
 }
