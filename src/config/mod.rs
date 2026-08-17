@@ -18,9 +18,12 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ConfigRead`] if the file cannot be read,
-    /// [`Error::ConfigParse`] if it is not valid TOML, and one of the
-    /// validation errors described on [`Config::validate`] otherwise.
+    /// Returns [`Error::ConfigRead`] if the file cannot be read and
+    /// [`Error::ConfigParse`] if it is not valid TOML. Validation adds
+    /// [`Error::Empty`] for a configuration with no ladders or a ladder with no
+    /// rungs, [`Error::DuplicateLadder`] for two ladders sharing a name,
+    /// [`Error::UnknownProvider`] for a rung naming an undefined provider, and
+    /// [`Error::InvalidPrice`] for a ceiling that is not positive and finite.
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|source| Error::ConfigRead {
