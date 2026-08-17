@@ -252,8 +252,12 @@ async fn serve_loads_prices_before_it_accepts_traffic() {
     let upstream = upstream().await;
     let port = free_port().await;
     let bind = format!("127.0.0.1:{port}");
+    let bind_for_server = bind.clone();
 
-    let server = tokio::spawn(serve(serving_config(&bind, &upstream)));
+    let credentials = BTreeMap::from([("surplus".to_string(), "test-key".to_string())]);
+    let server = tokio::spawn(async move {
+        serve_with_credentials(serving_config(&bind_for_server, &upstream), &credentials).await
+    });
 
     // Wait for the port to answer. Because `serve` refreshes before binding, a
     // health check that succeeds proves the price table is already populated —
@@ -291,6 +295,7 @@ async fn serve_reports_an_address_it_cannot_bind() {
     let taken = held.local_addr().unwrap().to_string();
 
     let error = serve(serving_config(&taken, &upstream)).await.unwrap_err();
+    drop(held);
 
     match error {
         Error::Bind { address, .. } => assert_eq!(address, taken),
