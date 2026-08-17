@@ -9,10 +9,15 @@
 use super::*;
 use crate::ladder::SkipReason;
 
+/// A provider deliberately pointed at a closed loopback port.
+///
+/// These tests must never reach a real marketplace: the process environment can
+/// hold a working credential, and a test that dispatches would spend real money
+/// and depend on the network. Port 1 refuses connections immediately.
 const OPEN: &str = r#"
 [providers.openrouter]
 kind = "openrouter"
-base_url = "https://openrouter.ai/api/v1"
+base_url = "http://127.0.0.1:1"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[ladders]]
@@ -364,13 +369,4 @@ async fn a_ladder_with_no_usable_rung_explains_itself() {
             .contains("OPENROUTER_API_KEY"),
         "{skipped:?}"
     );
-}
-#[tokio::test]
-async fn dbg_ladder() {
-    let state = state_with("bind = \"127.0.0.1:6969\"");
-    println!("ladders: {:?}", state.config.ladders.iter().map(|l| &l.name).collect::<Vec<_>>());
-    let response = route(state, &HeaderMap::new(), serde_json::json!({ "model": "flash" }), Wire::OpenAi).await;
-    let status = response.status();
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    println!("status={status} body={}", String::from_utf8_lossy(&body));
 }
