@@ -115,10 +115,11 @@ pub async fn serve(config: Config) -> Result<()> {
     tracing::info!("loading prices and balances before accepting traffic");
     refresh_credits_once(&state).await;
     refresh_prices_once(&state).await;
-    tracing::info!(
-        models = state.prices.read().await.len(),
-        "initial refresh complete"
-    );
+    // Read the count into a local first: an `.await` inside a `tracing` macro
+    // argument holds a non-`Send` temporary across it, which would make this
+    // whole future non-`Send` and so impossible for a caller to spawn.
+    let models = state.prices.read().await.len();
+    tracing::info!(models, "initial refresh complete");
 
     refresh::spawn(state.clone());
 
