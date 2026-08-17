@@ -365,3 +365,12 @@ async fn a_ladder_with_no_usable_rung_explains_itself() {
         "{skipped:?}"
     );
 }
+#[tokio::test]
+async fn dbg_ladder() {
+    let state = state_with("bind = \"127.0.0.1:6969\"");
+    println!("ladders: {:?}", state.config.ladders.iter().map(|l| &l.name).collect::<Vec<_>>());
+    let response = route(state, &HeaderMap::new(), serde_json::json!({ "model": "flash" }), Wire::OpenAi).await;
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    println!("status={status} body={}", String::from_utf8_lossy(&body));
+}
