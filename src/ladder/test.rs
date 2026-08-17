@@ -517,7 +517,10 @@ fn an_uncapped_rung_whose_sellers_are_all_down_is_skipped() {
     // decision, and it must not be reported as a chosen rung.
     assert!(selection.chosen.is_none());
     match &selection.skipped[0].reason {
-        SkipReason::NoSellerUnderCap { cap_per_1m, cheapest_per_1m } => {
+        SkipReason::NoSellerUnderCap {
+            cap_per_1m,
+            cheapest_per_1m,
+        } => {
             assert!(cap_per_1m.is_infinite());
             assert_eq!(*cheapest_per_1m, None);
         }

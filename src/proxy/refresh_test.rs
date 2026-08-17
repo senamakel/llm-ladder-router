@@ -260,8 +260,18 @@ async fn the_periodic_loops_keep_refreshing() {
         }
     }
 
-    assert!(calls.load(Ordering::SeqCst) >= 1, "the price loop never ran");
-    assert!(state.prices.read().await.get("surplus", "glm-5.2").is_some());
+    assert!(
+        calls.load(Ordering::SeqCst) >= 1,
+        "the price loop never ran"
+    );
+    assert!(
+        state
+            .prices
+            .read()
+            .await
+            .get("surplus", "glm-5.2")
+            .is_some()
+    );
 }
 
 #[tokio::test]

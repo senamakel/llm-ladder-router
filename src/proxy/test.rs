@@ -204,9 +204,7 @@ async fn upstream() -> String {
         )
         .route(
             "/{prefix}/v1/chat/completions",
-            post(|| async {
-                Json(serde_json::json!({ "provider": "Z.ai", "choices": [] }))
-            }),
+            post(|| async { Json(serde_json::json!({ "provider": "Z.ai", "choices": [] })) }),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -306,7 +304,13 @@ async fn serve_reports_an_address_it_cannot_bind() {
 #[tokio::test]
 async fn a_request_without_a_model_field_is_rejected() {
     let state = state_with("bind = \"127.0.0.1:6969\"");
-    let response = route(state, &HeaderMap::new(), serde_json::json!({}), Wire::OpenAi).await;
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({}),
+        Wire::OpenAi,
+    )
+    .await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
@@ -347,8 +351,9 @@ async fn an_unauthenticated_request_never_reaches_a_ladder() {
 }
 
 #[tokio::test]
-async fn a_ladder_with_no_usable_rung_explains_itself() {
-    // No price data and no credential, so the single rung cannot be tried.
+async fn a_ladder_whose_only_rung_fails_explains_itself() {
+    // The rung is uncapped, so it is tried; the upstream port is closed, so it
+    // fails, and the ladder runs out.
     let state = state_with("bind = \"127.0.0.1:6969\"");
     refresh_credits_once(&state).await;
 
@@ -367,11 +372,13 @@ async fn a_ladder_with_no_usable_rung_explains_itself() {
     let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let skipped = body["error"]["skipped"].as_array().unwrap();
     assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0]["rung"], 0);
+    assert_eq!(skipped[0]["provider"], "openrouter");
     assert!(
         skipped[0]["reason"]
             .as_str()
             .unwrap()
-            .contains("OPENROUTER_API_KEY"),
+            .contains("upstream failed"),
         "{skipped:?}"
     );
 }

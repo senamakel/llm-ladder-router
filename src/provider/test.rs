@@ -180,7 +180,10 @@ async fn upstream() -> String {
 
 fn openrouter_client(base_url: &str) -> Client {
     let mut headers = std::collections::BTreeMap::new();
-    headers.insert("HTTP-Referer".to_string(), "https://example.test/".to_string());
+    headers.insert(
+        "HTTP-Referer".to_string(),
+        "https://example.test/".to_string(),
+    );
     Client::with_credential(
         "openrouter",
         Provider {
@@ -212,7 +215,10 @@ fn chosen() -> Chosen {
 async fn openrouter_prices_and_balance_are_fetched_and_parsed() {
     let client = openrouter_client(&upstream().await);
 
-    let prices = client.fetch_prices("deepseek/deepseek-v4-flash").await.unwrap();
+    let prices = client
+        .fetch_prices("deepseek/deepseek-v4-flash")
+        .await
+        .unwrap();
     assert_eq!(prices.offers[0].provider, "DeepInfra");
     assert!((prices.offers[0].completion_per_1m - 0.2).abs() < 1e-9);
 
@@ -226,7 +232,11 @@ async fn the_credential_and_configured_headers_reach_the_upstream() {
     let client = openrouter_client(&upstream().await);
 
     let dispatched = client
-        .infer(&chosen(), Wire::OpenAi, &serde_json::json!({ "messages": [] }))
+        .infer(
+            &chosen(),
+            Wire::OpenAi,
+            &serde_json::json!({ "messages": [] }),
+        )
         .await
         .unwrap();
 
@@ -244,7 +254,11 @@ async fn the_anthropic_surface_sends_the_version_header() {
     let client = openrouter_client(&upstream().await);
 
     let dispatched = client
-        .infer(&chosen(), Wire::Anthropic, &serde_json::json!({ "messages": [] }))
+        .infer(
+            &chosen(),
+            Wire::Anthropic,
+            &serde_json::json!({ "messages": [] }),
+        )
         .await
         .unwrap();
 
