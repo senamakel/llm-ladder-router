@@ -396,8 +396,5 @@ fn the_discount_never_reaches_the_hundred_that_matches_nothing() {
 
     // A ceiling of zero would imply a 100% discount, which Surplus rejects
     // outright and which would make an affordable rung unreachable.
-    assert_eq!(
-        prices.discount_floor_pct(0.0, CostBasis::Completion),
-        Some(99)
-    );
+    assert_eq!(prices.discount_floor_pct(0.0), Some(99));
 }
