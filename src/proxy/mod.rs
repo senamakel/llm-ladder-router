@@ -106,8 +106,23 @@ pub fn build_with_credentials(
 /// Returns [`Error::Bind`] if the configured address cannot be bound, and
 /// [`Error::Serve`] if the server stops with an error.
 pub async fn serve(config: Config) -> Result<()> {
+    serve_with_credentials(config, &BTreeMap::new()).await
+}
+
+/// Serves using credentials the caller already holds.
+///
+/// The counterpart to [`build_with_credentials`], for deployments whose secrets
+/// come from somewhere other than the environment.
+///
+/// # Errors
+///
+/// As [`serve`].
+pub async fn serve_with_credentials(
+    config: Config,
+    credentials: &BTreeMap<String, String>,
+) -> Result<()> {
     let bind = config.server.bind.clone();
-    let (app, state) = build(config)?;
+    let (app, state) = build_with_credentials(config, credentials)?;
 
     // Load prices and balances before accepting traffic. Serving first would
     // open a cold-start window in which every capped rung is skipped for
@@ -115,10 +130,11 @@ pub async fn serve(config: Config) -> Result<()> {
     tracing::info!("loading prices and balances before accepting traffic");
     refresh_credits_once(&state).await;
     refresh_prices_once(&state).await;
-    tracing::info!(
-        models = state.prices.read().await.len(),
-        "initial refresh complete"
-    );
+    // Read the count into a local first: an `.await` inside a `tracing` macro
+    // argument holds a non-`Send` temporary across it, which would make this
+    // whole future non-`Send` and so impossible for a caller to spawn.
+    let models = state.prices.read().await.len();
+    tracing::info!(models, "initial refresh complete");
 
     refresh::spawn(state.clone());
 

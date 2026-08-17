@@ -4,48 +4,42 @@ This file is the single source of truth for how humans and coding agents work
 in this repository. `CLAUDE.md` is a symlink to this file, so every agent reads
 the same instructions.
 
-When you generate a new project from this template, keep this file and adapt
-the project-specific parts (crate name, module map, feature flags, commands).
-Delete guidance that no longer applies rather than leaving it to rot.
-
-## Template Checklist
-
-Do this once, in a single commit, before writing feature code:
-
-- [ ] Set `name`, `description`, `repository`, `keywords`, and `categories` in
-      `Cargo.toml`.
-- [ ] Rename the crate references in `README.md`, `src/lib.rs`, `examples/`,
-      and `tests/` (search for `rust_template` and `rust-template`).
-- [ ] Replace the placeholder `greeting` module with the first real feature
-      area, keeping the `mod.rs` / `types.rs` / `test.rs` layout.
-- [ ] Confirm `license` and `LICENSE` match the project's intended license.
-- [ ] Update the security contact in `SECURITY.md`.
-- [ ] Replace `ROADMAP.md` with the real plan, or delete it.
-- [ ] Rename the TinyBus interface, object path, and declared methods in
-      `src/tinybus_module/` while keeping `vendor/tinybus` pinned.
-- [ ] Rewrite the "Project Structure" section below to describe this crate.
+Keep it current: when a convention here stops matching the code, fix one or the
+other in the same change rather than leaving it to rot.
 
 ## Project Structure
 
-This is a Rust 2024 library crate rooted at `Cargo.toml`.
+This is a Rust 2024 library crate with one binary, rooted at `Cargo.toml`.
 
 ```text
 src/
 ├── lib.rs              # crate docs + the entire public re-export surface
 ├── error/mod.rs        # crate-wide `Error` and `Result<T>`
-├── tinybus_module/     # TinyBus interface, ABI exports, and integration tests
-└── <feature>/          # one directory per feature area
-    ├── mod.rs          # module docs, wiring, smallest useful public API
-    ├── types.rs        # substantial type definitions
-    └── test.rs         # module-local unit tests
+├── cli/                # everything the `ladder` binary does, minus the entry point
+├── config/             # `config.toml` into a validated `Config`
+├── pricing/            # normalized offers and the price table
+├── ladder/             # the selection engine: which rung serves, and why not the others
+├── credits/            # per-provider balances and the exhausted-account gate
+├── provider/           # marketplace clients
+│   ├── openrouter/     # enforces `provider.max_price` directly
+│   └── surplus/        # ceiling restated as a `/min{N}/` discount
+└── proxy/              # the HTTP surfaces, failover loop, and background refreshers
+bin/ladder.rs           # the binary entry point (see below)
 tests/                  # integration tests against the public API only
+tests/fixtures/         # payloads captured from the live marketplace APIs
 examples/               # runnable, compiled-in-CI usage examples
-vendor/tinybus/         # pinned TinyBus host types and module SDK
 docs/
 ├── specs/              # behavior and architecture specifications
 ├── plans/              # test-first implementation plans
 └── adr/                # immutable architecture decision records
 ```
+
+`bin/ladder.rs` sits **outside `src/`** deliberately. CI enforces at least 90%
+line coverage on every file under `src/`, and a `main` function cannot be
+exercised by a unit test. Keeping the binary to a few delegating lines, with
+every decision it makes in `src/cli/`, means the coverage bar applies to all the
+logic rather than being weakened to accommodate an untestable entry point. Do
+not move logic into `bin/`.
 
 Each feature area belongs in a focused module directory under `src/`. A module
 root explains the module, wires its pieces together, and exposes the smallest
@@ -66,6 +60,14 @@ broad ones.
 Keep public exports centralized in `src/lib.rs` so downstream users have one
 predictable surface. Put shared error variants in `src/error/mod.rs` and return
 the crate-wide `Result<T>` from fallible public APIs.
+
+### Never let a test reach a real marketplace
+
+The process environment can hold working marketplace credentials, so a test that
+dispatches to a real base URL spends real money and depends on the network. Point
+every dispatching test at a loopback mock or a closed port (`http://127.0.0.1:1`).
+The selection engine takes prices and balances as arguments precisely so the
+routing policy can be tested without any of this.
 
 ## Build And Test
 
@@ -137,21 +139,6 @@ add one:
 
 Keep `Cargo.lock` committed; this crate ships a lockfile so CI and releases are
 reproducible.
-
-### Vendored dependencies
-
-TinyBus is registered as the `vendor/tinybus` git submodule and pinned by its
-gitlink. It supplies the host types and module-side SDK required to build this
-crate's `cdylib`. Initialize it after cloning with:
-
-```sh
-git submodule update --init --recursive
-```
-
-Do not edit vendored code from the parent repository. Make TinyBus changes in
-its own repository, push them there, then update this repository's gitlink in a
-separate commit. Keep the exact path dependencies and minimal features unless a
-new module capability requires more.
 
 ## Testing
 
@@ -234,9 +221,7 @@ Releases run from `.github/workflows/release.yml` via a manual
 `workflow_dispatch` with a `patch` / `minor` / `major` bump; `current` resumes
 an interrupted release after its version commit and tag exist. The workflow
 re-runs the full validation suite, computes the next version, updates
-`Cargo.toml` and `Cargo.lock`, commits and tags `vX.Y.Z`, builds the TinyBus
-module for every supported platform, pushes, and creates an immutable GitHub
-release with installable native packages.
+`Cargo.toml` and `Cargo.lock`, commits and tags `vX.Y.Z`, and pushes.
 
 Consequently:
 
@@ -245,8 +230,7 @@ Consequently:
 - Follow semantic versioning. Any change to the public surface that is not
   purely additive is a breaking change and needs a major bump (pre-1.0: a minor
   bump).
-- The module must be packageable for every release target — `main` should
-  always be green.
+- `main` should always be green.
 
 ## Agent Working Agreement
 

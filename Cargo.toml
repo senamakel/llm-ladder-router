@@ -28,7 +28,7 @@ path = "src/lib.rs"
 # The OpenAI-compatible proxy. Kept deliberately thin: it parses arguments and
 # hands straight to `proxy::serve`, so the routing logic stays library-testable.
 name = "ladder"
-path = "src/main.rs"
+path = "bin/ladder.rs"
 
 [dependencies]
 # Derive macros for the crate-wide error type in `src/error/mod.rs`. Every
@@ -60,7 +60,9 @@ dotenvy = "0.15"
 
 [dev-dependencies]
 # Integration tests bind a loopback server to assert what reaches the wire.
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+# `test-util` pauses the clock so the refresh loops are tested deterministically
+# rather than by sleeping on the wall clock.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "test-util"] }
 # Low-level HTTP for the loopback stub upstreams.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 
