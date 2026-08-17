@@ -26,4 +26,4 @@ worktrees/*
 
 # Background server pidfile and log from scripts/run-server
 .run/
-config.toml
+# config.toml is tracked: it holds no secrets, only env-var names.

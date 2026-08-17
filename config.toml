@@ -1,0 +1,116 @@
+# Router configuration.
+#
+# Credentials are named by environment variable, never inlined, so this file is
+# safe to commit. Copy it to `config.toml` and adjust.
+
+[server]
+bind = "127.0.0.1:6969"
+# A single upstream attempt that outlives this is treated as a rung failure and
+# the ladder advances.
+request_timeout = "120s"
+# The key callers must present, as `Authorization: Bearer <key>` or `x-api-key`.
+# Both spellings work on both surfaces. Change this before binding anywhere
+# other than loopback; omit it entirely to accept every caller.
+api_key = "ladder-local-dev-key"
+# Prefer this in a real deployment: when the named variable is set and
+# non-empty it wins over the literal above, so the secret stays out of the file.
+# api_key_env = "LADDER_API_KEY"
+
+[pricing]
+# How often the order books are re-read.
+refresh = "15m"
+# Price data older than this is not trusted; a capped rung whose prices are
+# stale is skipped rather than admitted on a guess.
+stale_after = "1h"
+
+[credits]
+refresh = "5m"
+# A provider with less than this much spendable balance is skipped entirely.
+min_balance_usd = 0.50
+
+# Each marketplace resells many sub-providers whose prices move independently,
+# so each carries its own ceiling that holds no matter which ladder or rung got
+# there. A rung's own ceiling combines with this one by taking the tighter.
+
+[providers.surplus]
+kind = "surplus"
+base_url = "https://api.surplusintelligence.ai"
+api_key_env = "SURPLUS_API_KEY"
+max_cost_per_1m = 0.50
+
+[providers.openrouter]
+kind = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+max_cost_per_1m = 0.50
+headers = { "HTTP-Referer" = "https://opencompany.tinyhumans.ai/", "X-OpenRouter-Title" = "OpenCompany" }
+
+# Prices observed live on 2026-08-18, USD per million output tokens:
+#
+#   model                        direct    best   median   eligible sellers
+#   surplus deepseek-v4-pro      3.3010  0.0783   0.6317   158
+#   surplus glm-5.2              3.7400  0.0097   0.9000   156
+#   surplus gpt-5.6-luna         0.6000  0.0240   0.5400    88
+#   surplus deepseek-v4-flash    0.1652  0.0162   0.1080   117
+#   openrouter deepseek-v4-flash      —  0.1372   0.2800    18
+#
+# Every ceiling below sits under its model's median offer, so a rung takes only
+# a genuinely discounted seller and steps down rather than paying near the
+# direct rate.
+
+# The cheap, high-throughput ladder: reach for Luna while the marketplace is
+# clearing it cheaply, fall back to Flash, and leave OpenRouter as the backstop
+# for when no Surplus seller fits at all.
+[[ladders]]
+name = "flash"
+cost_basis = "completion"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "gpt-5.6-luna"
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+  # Set just under OpenRouter's cheapest endpoint, so this rung only falls
+  # through when Surplus has genuinely lost on price.
+  max_cost_per_1m = 0.15
+
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-flash"
+  max_cost_per_1m = 0.30
+  prefer = ["deepinfra"]
+
+# The reasoning ladder: the strongest model the budget allows, stepping down
+# through Luna and Flash rather than failing.
+[[ladders]]
+name = "reasoning"
+cost_basis = "completion"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "glm-5.2"
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "gpt-5.6-luna"
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+  max_cost_per_1m = 0.15
+
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-flash"
+  max_cost_per_1m = 0.30
+  prefer = ["deepinfra"]
