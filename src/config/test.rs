@@ -394,4 +394,4 @@ fn the_shipped_example_config_is_valid() {
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
-
+}
