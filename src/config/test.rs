@@ -363,16 +363,25 @@ fn the_shipped_example_config_is_valid() {
 
     // The example is the documentation for the two ladders the router ships
     // with; a change to either should be deliberate.
-    let flash = config.ladder("flash").unwrap();
-    assert_eq!(flash.rungs.len(), 2);
-    assert_eq!(flash.rungs[0].provider, "surplus");
-    assert_eq!(flash.rungs[0].model, "deepseek-v4-flash");
-    assert_eq!(flash.rungs[1].provider, "openrouter");
-    assert_eq!(flash.rungs[1].model, "deepseek/deepseek-v4-flash");
-
-    let reasoning = config.ladder("reasoning").unwrap();
     assert_eq!(
-        reasoning
+        config
+            .ladder("flash")
+            .unwrap()
+            .rungs
+            .iter()
+            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("surplus", "gpt-5.6-luna"),
+            ("surplus", "deepseek-v4-flash"),
+            ("openrouter", "deepseek/deepseek-v4-flash"),
+        ]
+    );
+
+    assert_eq!(
+        config
+            .ladder("reasoning")
+            .unwrap()
             .rungs
             .iter()
             .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
@@ -380,8 +389,9 @@ fn the_shipped_example_config_is_valid() {
         vec![
             ("surplus", "deepseek-v4-pro"),
             ("surplus", "glm-5.2"),
+            ("surplus", "gpt-5.6-luna"),
             ("surplus", "deepseek-v4-flash"),
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
-}
+
