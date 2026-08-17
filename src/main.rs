@@ -62,3 +62,56 @@ fn config_path(args: impl Iterator<Item = String>) -> String {
     }
     DEFAULT_CONFIG.to_string()
 }
+
+#[cfg(test)]
+mod test {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::{DEFAULT_CONFIG, config_path};
+
+    fn parse(args: &[&str]) -> String {
+        config_path(args.iter().map(|arg| (*arg).to_string()))
+    }
+
+    #[test]
+    fn defaults_when_no_config_is_named() {
+        assert_eq!(parse(&[]), DEFAULT_CONFIG);
+        assert_eq!(parse(&["--verbose"]), DEFAULT_CONFIG);
+    }
+
+    #[test]
+    fn reads_the_separated_form() {
+        assert_eq!(parse(&["--config", "/etc/ladder.toml"]), "/etc/ladder.toml");
+    }
+
+    #[test]
+    fn reads_the_joined_form() {
+        assert_eq!(parse(&["--config=/etc/ladder.toml"]), "/etc/ladder.toml");
+    }
+
+    #[test]
+    fn skips_arguments_before_the_flag() {
+        assert_eq!(parse(&["--verbose", "--config", "a.toml"]), "a.toml");
+    }
+
+    #[test]
+    fn the_first_config_wins() {
+        assert_eq!(parse(&["--config", "first.toml", "--config", "second.toml"]), "first.toml");
+    }
+
+    #[test]
+    fn a_trailing_flag_with_no_value_falls_back_to_the_default() {
+        // `--config` as the final argument has nothing to read, and guessing
+        // would be worse than using the documented default.
+        assert_eq!(parse(&["--config"]), DEFAULT_CONFIG);
+    }
+
+    #[tokio::test]
+    async fn a_missing_configuration_file_stops_the_router() {
+        // `run` is the whole binary minus argument parsing and logging setup.
+        let error = super::run_with("/nonexistent/ladder-router/config.toml")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("cannot read config"), "{error}");
+    }
+}
