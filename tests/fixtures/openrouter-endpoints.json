@@ -1,0 +1,323 @@
+{
+  "data": {
+    "id": "deepseek/deepseek-v4-flash",
+    "name": "DeepSeek: DeepSeek V4 Flash 0423",
+    "created": 1777000666,
+    "description": "DeepSeek V4 Flash is an efficiency-optimized Mixture-of-Experts model from DeepSeek with 284B total parameters and 13B activated parameters, supporting a 1M-token context window. It is designed for fast inference and...",
+    "architecture": {
+      "tokenizer": "DeepSeek",
+      "instruct_type": null,
+      "modality": "text->text",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    "endpoints": [
+      {
+        "name": "DigitalOcean | deepseek/deepseek-v4-flash-20260423",
+        "model_id": "deepseek/deepseek-v4-flash",
+        "model_name": "DeepSeek: DeepSeek V4 Flash 0423",
+        "context_length": 1048576,
+        "pricing": {
+          "prompt": "0.0000000679",
+          "completion": "0.000000168",
+          "input_cache_read": "0.0000000168",
+          "discount": 0
+        },
+        "provider_name": "DigitalOcean",
+        "tag": "digitalocean",
+        "quantization": "unknown",
+        "max_completion_tokens": null,
+        "max_prompt_tokens": null,
+        "supported_parameters": [
+          "reasoning",
+          "include_reasoning",
+          "temperature",
+          "top_p",
+          "max_tokens",
+          "tool_choice",
+          "tools",
+          "structured_outputs",
+          "response_format",
+          "logprobs",
+          "top_logprobs",
+          "reasoning_effort"
+        ],
+        "status": 0,
+        "uptime_last_30m": 98.54338270363638,
+        "uptime_last_5m": 97.12827492344334,
+        "uptime_last_1d": 98.76505438080812,
+        "supports_implicit_caching": false,
+        "supports_voice_cloning": false,
+        "latency_last_30m": {
+          "p50": 1513.5,
+          "p75": 2201.25,
+          "p90": 3212.800000000001,
+          "p99": 27326.66000000001
+        },
+        "throughput_last_30m": {
+          "p50": 7,
+          "p75": 9,
+          "p90": 11,
+          "p99": 19
+        }
+      },
+      {
+        "name": "Baidu | deepseek/deepseek-v4-flash-20260423",
+        "model_id": "deepseek/deepseek-v4-flash",
+        "model_name": "DeepSeek: DeepSeek V4 Flash 0423",
+        "context_length": 1048576,
+        "pricing": {
+          "prompt": "0.00000007",
+          "completion": "0.00000014",
+          "input_cache_read": "0.000000014",
+          "discount": 0.5
+        },
+        "provider_name": "Baidu",
+        "tag": "baidu/fp8",
+        "quantization": "fp8",
+        "max_completion_tokens": 131072,
+        "max_prompt_tokens": null,
+        "supported_parameters": [
+          "reasoning",
+          "include_reasoning",
+          "temperature",
+          "top_p",
+          "max_tokens",
+          "stop",
+          "response_format",
+          "structured_outputs",
+          "tools",
+          "tool_choice",
+          "reasoning_effort"
+        ],
+        "status": 0,
+        "uptime_last_30m": 99.92705098948787,
+        "uptime_last_5m": 99.96309963099631,
+        "uptime_last_1d": 99.88447061556765,
+        "supports_implicit_caching": false,
+        "supports_voice_cloning": false,
+        "latency_last_30m": {
+          "p50": 683,
+          "p75": 904,
+          "p90": 1636.9000000000005,
+          "p99": 6327.080000000016
+        },
+        "throughput_last_30m": {
+          "p50": 83,
+          "p75": 101,
+          "p90": 115,
+          "p99": 141
+        }
+      },
+      {
+        "name": "StreamLake | deepseek/deepseek-v4-flash-20260423",
+        "model_id": "deepseek/deepseek-v4-flash",
+        "model_name": "DeepSeek: DeepSeek V4 Flash 0423",
+        "context_length": 1024000,
+        "pricing": {
+          "prompt": "0.0000000714",
+          "completion": "0.0000001428",
+          "input_cache_read": "0.00000001428",
+          "discount": 0.49
+        },
+        "provider_name": "StreamLake",
+        "tag": "streamlake/fp8",
+        "quantization": "fp8",
+        "max_completion_tokens": 384000,
+        "max_prompt_tokens": null,
+        "supported_parameters": [
+          "reasoning",
+          "include_reasoning",
+          "response_format",
+          "tools",
+          "tool_choice",
+          "logprobs",
+          "top_logprobs",
+          "structured_outputs",
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "reasoning_effort"
+        ],
+        "status": 0,
+        "uptime_last_30m": 99.78745251789779,
+        "uptime_last_5m": 99.75543893615936,
+        "uptime_last_1d": 97.6221854962042,
+        "supports_implicit_caching": false,
+        "supports_voice_cloning": false,
+        "latency_last_30m": {
+          "p50": 1481,
+          "p75": 2336,
+          "p90": 4378.900000000001,
+          "p99": 12388.350000000002
+        },
+        "throughput_last_30m": {
+          "p50": 34,
+          "p75": 45,
+          "p90": 54,
+          "p99": 66
+        }
+      },
+      {
+        "name": "GMICloud | deepseek/deepseek-v4-flash-20260423",
+        "model_id": "deepseek/deepseek-v4-flash",
+        "model_name": "DeepSeek: DeepSeek V4 Flash 0423",
+        "context_length": 1048575,
+        "pricing": {
+          "prompt": "0.000000084",
+          "completion": "0.000000168",
+          "input_cache_read": "0.0000000168",
+          "discount": 0.4
+        },
+        "provider_name": "GMICloud",
+        "tag": "gmicloud/fp8",
+        "quantization": "fp8",
+        "max_completion_tokens": null,
+        "max_prompt_tokens": null,
+        "supported_parameters": [
+          "reasoning",
+          "include_reasoning",
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "seed",
+          "tools",
+          "tool_choice",
+          "response_format",
+          "reasoning_effort"
+        ],
+        "status": 0,
+        "uptime_last_30m": 99.96046154555819,
+        "uptime_last_5m": 99.97330723373966,
+        "uptime_last_1d": 98.89254444731618,
+        "supports_implicit_caching": false,
+        "supports_voice_cloning": false,
+        "latency_last_30m": {
+          "p50": 2122,
+          "p75": 2364,
+          "p90": 2653.9000000000005,
+          "p99": 4490.440000000002
+        },
+        "throughput_last_30m": {
+          "p50": 38,
+          "p75": 43,
+          "p90": 67,
+          "p99": 128
+        }
+      },
+      {
+        "name": "DeepInfra | deepseek/deepseek-v4-flash-20260423",
+        "model_id": "deepseek/deepseek-v4-flash",
+        "model_name": "DeepSeek: DeepSeek V4 Flash 0423",
+        "context_length": 1048576,
+        "pricing": {
+          "prompt": "0.00000009",
+          "completion": "0.00000018",
+          "input_cache_read": "0.000000018",
+          "discount": 0
+        },
+        "provider_name": "DeepInfra",
+        "tag": "deepinfra/fp8",
+        "quantization": "fp8",
+        "max_completion_tokens": 65536,
+        "max_prompt_tokens": null,
+        "supported_parameters": [
+          "reasoning",
+          "include_reasoning",
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "repetition_penalty",
+          "top_k",
+          "seed",
+          "min_p",
+          "response_format",
+          "tools",
+          "tool_choice",
+          "structured_outputs",
+          "logit_bias",
+          "reasoning_effort"
+        ],
+        "status": 0,
+        "uptime_last_30m": 99.05726913673124,
+        "uptime_last_5m": 99.78135249101983,
+        "uptime_last_1d": 99.64205249731106,
+        "supports_implicit_caching": false,
+        "supports_voice_cloning": false,
+        "latency_last_30m": {
+          "p50": 798,
+          "p75": 1017,
+          "p90": 1289,
+          "p99": 4785.080000000002
+        },
+        "throughput_last_30m": {
+          "p50": 26,
+          "p75": 29,
+          "p90": 34,
+          "p99": 60
+        }
+      },
+      {
+        "name": "Sail Research | deepseek/deepseek-v4-flash-20260423",
+        "model_id": "deepseek/deepseek-v4-flash",
+        "model_name": "DeepSeek: DeepSeek V4 Flash 0423",
+        "context_length": 1048576,
+        "pricing": {
+          "prompt": "0.00000009",
+          "completion": "0.00000018",
+          "input_cache_read": "0.00000002",
+          "discount": 0
+        },
+        "provider_name": "Sail Research",
+        "tag": "sail-research/fp4",
+        "quantization": "fp4",
+        "max_completion_tokens": 1048576,
+        "max_prompt_tokens": null,
+        "supported_parameters": [
+          "reasoning",
+          "include_reasoning",
+          "temperature",
+          "top_p",
+          "top_k",
+          "frequency_penalty",
+          "presence_penalty",
+          "stop",
+          "seed",
+          "max_tokens",
+          "response_format",
+          "tools",
+          "tool_choice",
+          "logprobs",
+          "top_logprobs",
+          "reasoning_effort"
+        ],
+        "status": 0,
+        "uptime_last_30m": 99.78105906313645,
+        "uptime_last_5m": 99.7465604634323,
+        "uptime_last_1d": 99.22897349187302,
+        "supports_implicit_caching": false,
+        "supports_voice_cloning": false,
+        "latency_last_30m": {
+          "p50": 708,
+          "p75": 1063,
+          "p90": 2019.800000000001,
+          "p99": 9029.250000000004
+        },
+        "throughput_last_30m": {
+          "p50": 45,
+          "p75": 72,
+          "p90": 99,
+          "p99": 145
+        }
+      }
+    ]
+  }
+}

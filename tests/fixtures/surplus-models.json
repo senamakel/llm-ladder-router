@@ -1,0 +1,415 @@
+{
+  "data": [
+    {
+      "id": "openai-gpt-oss-120b",
+      "name": "OpenAI GPT OSS 120B",
+      "created": 1735689600,
+      "description": "OpenAI GPT OSS 120B",
+      "context_length": 128000,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "GPT",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000000700",
+        "completion": "0.0000003000",
+        "input_cache_read": "0.0000000105",
+        "input_cache_write": "0.0000000700"
+      },
+      "top_provider": {
+        "context_length": 128000,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "stop"
+      ],
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "provider": "OpenAI",
+      "per_request_limits": null
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "created": 1735689600,
+      "description": "DeepSeek V4 Flash \u2014 efficiency-optimized 284B-parameter MoE model with 13B active parameters, 1M context, and strong reasoning/coding performance.",
+      "context_length": 1000000,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000000826",
+        "completion": "0.0000001652",
+        "input_cache_read": "0.0000000165",
+        "input_cache_write": "0.0000000826"
+      },
+      "top_provider": {
+        "context_length": 1000000,
+        "max_completion_tokens": 128000,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "min_p",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "stop",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "include_reasoning",
+        "reasoning"
+      ],
+      "supported_features": [
+        "streaming",
+        "tools",
+        "reasoning"
+      ],
+      "provider": "DeepSeek",
+      "per_request_limits": null
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM 5.2",
+      "created": 1735689600,
+      "description": "GLM-5.2 \u2014 Z.ai's next-generation flagship LLM with a 1M-token context window, enhanced reasoning, agentic tool use, and prompt caching.",
+      "context_length": 1048576,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000011900",
+        "completion": "0.0000037400",
+        "input_cache_read": "0.0000002210",
+        "input_cache_write": "0.0000011900"
+      },
+      "top_provider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "supported_features": [
+        "streaming",
+        "reasoning",
+        "tools"
+      ],
+      "provider": "Z.ai",
+      "per_request_limits": null
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "created": 1735689600,
+      "description": "GPT-5.6 Sol \u2014 flagship GPT-5.6 model for complex reasoning, coding, command-line use, and multi-step agentic workflows. Served on Surplus via OpenRouter and Venice.",
+      "context_length": 1050000,
+      "architecture": {
+        "modality": "text+image+file->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "GPT",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000050000",
+        "completion": "0.0000300000",
+        "input_cache_read": "0.0000005000",
+        "input_cache_write": "0.0000062500",
+        "web_search": "0.0100000000"
+      },
+      "top_provider": {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "tool_choice",
+        "tools"
+      ],
+      "supported_features": [
+        "streaming",
+        "tools",
+        "vision",
+        "reasoning",
+        "file_input",
+        "web_search"
+      ],
+      "provider": "OpenAI",
+      "per_request_limits": null
+    },
+    {
+      "id": "deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "created": 1735689600,
+      "description": "DeepSeek V4 Pro 0813 is a large-scale mixture-of-experts model from DeepSeek. This is the GA release of DeepSeek V4 Pro.",
+      "context_length": 1048576,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000013200",
+        "completion": "0.0000039600",
+        "input_cache_read": "0.0000000440",
+        "input_cache_write": "0.0000013200"
+      },
+      "top_provider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 384000,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logprobs",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_logprobs",
+        "top_p"
+      ],
+      "supported_features": [
+        "streaming",
+        "tools",
+        "reasoning",
+        "json_mode",
+        "web_search"
+      ],
+      "provider": "DeepSeek",
+      "per_request_limits": null
+    },
+    {
+      "id": "minimax-m2.1",
+      "name": "MiniMax M2.1",
+      "created": 1735689600,
+      "description": "MiniMax M2.1",
+      "context_length": 198000,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003000",
+        "completion": "0.0000012000",
+        "input_cache_read": "0.0000000300",
+        "input_cache_write": "0.0000003000"
+      },
+      "top_provider": {
+        "context_length": 198000,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "supported_features": [
+        "streaming",
+        "tools",
+        "reasoning"
+      ],
+      "provider": "MiniMax",
+      "per_request_limits": null
+    },
+    {
+      "id": "gpt-5-mini",
+      "name": "GPT 5 Mini",
+      "created": 1735689600,
+      "description": "GPT 5 Mini \u2014 compact OpenAI model with 400k context",
+      "context_length": 400000,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "GPT",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000002500",
+        "completion": "0.0000020000",
+        "input_cache_read": "0.0000000250",
+        "input_cache_write": "0.0000002500"
+      },
+      "top_provider": {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "stop",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "seed",
+        "structured_outputs"
+      ],
+      "supported_features": [
+        "streaming",
+        "tools",
+        "reasoning"
+      ],
+      "provider": "OpenAI",
+      "per_request_limits": null
+    },
+    {
+      "id": "qwen3-coder-turbo",
+      "name": "Qwen 3 Coder 480B Turbo",
+      "created": 1735689600,
+      "description": "Qwen 3 Coder 480B Turbo",
+      "context_length": 256000,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003500",
+        "completion": "0.0000015000",
+        "input_cache_read": "0.0000000400",
+        "input_cache_write": "0.0000003500"
+      },
+      "top_provider": {
+        "context_length": 256000,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "supported_parameters": [
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "stop"
+      ],
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "provider": "Alibaba",
+      "per_request_limits": null
+    }
+  ]
+}
