@@ -1,0 +1,126 @@
+#!/bin/sh
+# Run the ladder router in the background, or manage an already-running one.
+#
+#   scripts/run-server [start|stop|restart|status|logs|tail]
+#
+# Defaults to `start`. The server writes to scripts/../.run/, which is
+# git-ignored: a pidfile so a second start does not double-bind the port, and a
+# logfile so a background run is still inspectable.
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+run_dir="$root/.run"
+config="${LADDER_CONFIG:-$root/config.toml}"
+command=${1:-start}
+
+# Key the pidfile to the config, so running a second config on a second port
+# does not look like the first one is already up.
+slug=$(printf '%s' "$config" | tr -c 'A-Za-z0-9' '_')
+pidfile="$run_dir/ladder-$slug.pid"
+logfile="$run_dir/ladder-$slug.log"
+
+mkdir -p "$run_dir"
+
+# The pidfile is only trustworthy if that pid is still our server; a reused pid
+# after a reboot would otherwise make `start` refuse forever.
+running_pid() {
+    [ -f "$pidfile" ] || return 1
+    pid=$(cat "$pidfile" 2>/dev/null) || return 1
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    printf '%s' "$pid"
+}
+
+bind_address() {
+    # Read the port back from the config rather than hardcoding it, so this
+    # script cannot drift from what the server actually binds.
+    sed -n 's/^[[:space:]]*bind[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "$config" | head -1
+}
+
+start() {
+    if pid=$(running_pid); then
+        echo "already running (pid $pid) on $(bind_address)"
+        return 0
+    fi
+
+    if [ ! -f "$config" ]; then
+        echo "no config at $config" >&2
+        echo "copy the example first:  cp config.example.toml config.toml" >&2
+        return 1
+    fi
+
+    # Something else already on the port would answer our health check and make
+    # a failed bind look like a successful start, so refuse up front.
+    address=$(bind_address)
+    if curl -fsS -m 1 "http://$address/healthz" >/dev/null 2>&1; then
+        echo "$address is already served by another process" >&2
+        echo "stop it first, or point LADDER_CONFIG at a config with a free port" >&2
+        return 1
+    fi
+
+    echo "building..."
+    ( cd "$root" && cargo build --quiet --bin ladder )
+
+    # `nohup` plus a redirect keeps the server alive after this shell exits,
+    # which is the whole point of running it in the background.
+    ( cd "$root" && nohup ./target/debug/ladder --config "$config" >"$logfile" 2>&1 & echo $! >"$pidfile" )
+
+    # Wait for the port to answer rather than sleeping a fixed guess.
+    i=0
+    while [ "$i" -lt 100 ]; do
+        if curl -fsS -m 1 "http://$address/healthz" >/dev/null 2>&1; then
+            echo "listening on http://$address  (pid $(cat "$pidfile"))"
+            echo "logs: $logfile"
+            return 0
+        fi
+        if ! running_pid >/dev/null; then
+            echo "server exited during startup; last lines:" >&2
+            tail -20 "$logfile" >&2
+            return 1
+        fi
+        i=$((i + 1))
+        sleep 0.1
+    done
+
+    echo "server did not answer on $address within 10s; last lines:" >&2
+    tail -20 "$logfile" >&2
+    return 1
+}
+
+stop() {
+    if pid=$(running_pid); then
+        kill "$pid"
+        # Give it a moment to shut down gracefully before reporting success.
+        i=0
+        while [ "$i" -lt 50 ] && kill -0 "$pid" 2>/dev/null; do
+            i=$((i + 1))
+            sleep 0.1
+        done
+        rm -f "$pidfile"
+        echo "stopped (pid $pid)"
+    else
+        rm -f "$pidfile"
+        echo "not running"
+    fi
+}
+
+case "$command" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    status)
+        if pid=$(running_pid); then
+            echo "running (pid $pid) on $(bind_address)"
+        else
+            echo "not running"
+            exit 1
+        fi
+        ;;
+    logs)    cat "$logfile" ;;
+    tail)    tail -f "$logfile" ;;
+    *)
+        echo "usage: $0 [start|stop|restart|status|logs|tail]" >&2
+        exit 2
+        ;;
+esac
