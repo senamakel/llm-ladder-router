@@ -13,7 +13,10 @@ use axum::Json;
 use axum::routing::get;
 
 use super::*;
+use crate::config::Config;
 use crate::pricing::{ModelPrices, Offer};
+use crate::proxy::build_with_credentials;
+use std::collections::BTreeMap;
 
 /// A loopback Surplus that serves an order book until it is told to fail.
 async fn upstream(fail_after: usize) -> (String, Arc<AtomicUsize>) {
