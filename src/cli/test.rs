@@ -70,3 +70,42 @@ async fn an_invalid_configuration_stops_the_router() {
 
     std::fs::remove_file(&path).unwrap();
 }
+
+#[tokio::test]
+async fn a_valid_configuration_is_loaded_and_handed_to_the_server() {
+    // Hold a port so `serve` gets as far as binding and then fails, which
+    // exercises the whole load-and-serve path without leaving a server running.
+    let held = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let taken = held.local_addr().unwrap();
+
+    let path = std::env::temp_dir().join("llm-ladder-router-cli-valid.toml");
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+            [server]
+            bind = "{taken}"
+
+            [providers.openrouter]
+            kind = "openrouter"
+            # A closed loopback port: this test must never reach a real
+            # marketplace, since the environment may hold a working key.
+            base_url = "http://127.0.0.1:1"
+            api_key_env = "LADDER_TEST_UNSET_KEY"
+
+            [[ladders]]
+            name = "flash"
+              [[ladders.rungs]]
+              provider = "openrouter"
+              model = "m"
+            "#
+        ),
+    )
+    .unwrap();
+
+    let error = run_with(&path.display().to_string()).await.unwrap_err();
+    assert!(error.to_string().contains("cannot bind"), "{error}");
+
+    drop(held);
+    std::fs::remove_file(&path).unwrap();
+}
