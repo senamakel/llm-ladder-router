@@ -107,8 +107,7 @@ pub fn select(
         }
 
         let cheapest_per_1m = admitted.first().map(|offer| offer.price(ladder.cost_basis));
-        let min_discount_pct =
-            cap.and_then(|cap| model_prices.discount_floor_pct(cap, ladder.cost_basis));
+        let min_discount_pct = cap.and_then(|cap| model_prices.discount_floor_pct(cap));
 
         return Selection {
             skipped,

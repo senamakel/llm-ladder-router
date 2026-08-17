@@ -1,7 +1,7 @@
 //! End-to-end tests against mock marketplaces.
 //!
 //! Each test stands up loopback HTTP servers that impersonate Surplus and
-//! OpenRouter, points a real router at them, and drives it through its own
+//! `OpenRouter`, points a real router at them, and drives it through its own
 //! public HTTP surface. That covers what unit tests cannot: what actually
 //! reaches the wire, and whether a failing rung really advances the ladder.
 
@@ -64,7 +64,7 @@ async fn mock_surplus(behavior: Behavior, price_per_1m: f64) -> (String, Arc<Mut
     (serve(app).await, recorded)
 }
 
-/// Starts a mock OpenRouter and returns its base URL and recorder.
+/// Starts a mock `OpenRouter` and returns its base URL and recorder.
 async fn mock_openrouter(behavior: Behavior, price_per_1m: f64) -> (String, Arc<Mutex<Recorded>>) {
     let recorded = Arc::new(Mutex::new(Recorded::default()));
     let state = MockState {

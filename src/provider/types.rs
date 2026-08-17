@@ -8,7 +8,7 @@
 /// two would lose fields on every round trip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wire {
-    /// OpenAI chat completions.
+    /// `OpenAI` chat completions.
     OpenAi,
     /// Anthropic messages.
     Anthropic,

@@ -95,20 +95,11 @@ fn a_ceiling_becomes_the_discount_that_matches_it() {
     let prices = ModelPrices::new(vec![offer("Z.ai", 0.05, 0.09)]);
 
     // 0.30 against a 3.74 direct price leaves 8.02%, so 91% must be discounted.
-    assert_eq!(
-        prices.discount_floor_pct(0.30, CostBasis::Completion),
-        Some(91)
-    );
+    assert_eq!(prices.discount_floor_pct(0.30), Some(91));
     // A ceiling at the direct price needs no discount at all.
-    assert_eq!(
-        prices.discount_floor_pct(3.74, CostBasis::Completion),
-        Some(0)
-    );
+    assert_eq!(prices.discount_floor_pct(3.74), Some(0));
     // A ceiling above the direct price still needs none.
-    assert_eq!(
-        prices.discount_floor_pct(99.0, CostBasis::Completion),
-        Some(0)
-    );
+    assert_eq!(prices.discount_floor_pct(99.0), Some(0));
 }
 
 #[test]
@@ -118,7 +109,7 @@ fn there_is_no_discount_to_compute_without_a_direct_price() {
     let prices = ModelPrices::new(vec![offer]);
 
     // OpenRouter publishes no direct price, and guessing one would be wrong.
-    assert_eq!(prices.discount_floor_pct(0.30, CostBasis::Completion), None);
+    assert_eq!(prices.discount_floor_pct(0.30), None);
 }
 
 #[test]

@@ -131,3 +131,7 @@ pub async fn refresh_credits_once(state: &State) {
 
     *state.credits.write().await = credits;
 }
+
+#[cfg(test)]
+#[path = "refresh_test.rs"]
+mod test;
