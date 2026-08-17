@@ -1,48 +1,68 @@
 [package]
-name = "rust-template"
+name = "llm-ladder-router"
 version = "0.1.5"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-only"
-description = "A production-ready template for installable TinyBus modules."
-repository = "https://github.com/tinyhumansai/rust-template"
-documentation = "https://docs.rs/rust-template"
+description = "Budget-aware routing across LLM marketplace tiers, with an OpenAI-compatible proxy."
+repository = "https://github.com/senamakel/llm-ladder-router"
+documentation = "https://docs.rs/llm-ladder-router"
 readme = "README.md"
-keywords = ["tinybus", "module", "plugin", "template"]
-categories = ["development-tools"]
+keywords = ["llm", "router", "openrouter", "proxy", "budget"]
+categories = ["web-programming::http-server", "api-bindings"]
 publish = false
 # Keep the published package to what a consumer actually needs.
 exclude = [
     ".github/",
-    ".gitmodules",
     "docs/",
-    "vendor/",
     "worktrees/",
     ".env.example",
     "deny.toml",
 ]
 
 [lib]
-# Keep the ordinary Rust library for tests and downstream reuse while also
-# producing the native module artifact that TinyBus loads at runtime.
-crate-type = ["rlib", "cdylib"]
+name = "llm_ladder_router"
+path = "src/lib.rs"
+
+[[bin]]
+# The OpenAI-compatible proxy. Kept deliberately thin: it parses arguments and
+# hands straight to `proxy::serve`, so the routing logic stays library-testable.
+name = "ladder"
+path = "src/main.rs"
 
 [dependencies]
-# TinyBus defines the message types, interface macro, and frozen module ABI used
-# by the generated integration. Socket and CLI features are unnecessary here.
-tinybus = { path = "vendor/tinybus/crates/tinybus", version = "0.1.0", default-features = false, features = ["macros", "modules"] }
-# The module-side SDK owns the isolated runtime and exports the ABI entrypoints
-# required by TinyBus's dynamic loader.
-tinybus-module = { path = "vendor/tinybus/crates/tinybus-module", version = "0.1.0" }
 # Derive macros for the crate-wide error type in `src/error/mod.rs`. Every
 # dependency entry should carry a comment like this one saying why it is here.
 thiserror = "2"
+# The proxy, the pricing refresher, and the credits poller are all concurrent
+# and I/O bound; `tokio` is the single runtime the crate standardizes on.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
+# HTTP server for the OpenAI-compatible surface.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+# Upstream HTTP client for marketplace calls. `rustls` avoids a system OpenSSL
+# dependency; `stream` is required to relay streaming completions.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+# `config.toml` and every marketplace payload are deserialized with serde.
+serde = { version = "1", features = ["derive"] }
+# Marketplace bodies are relayed and patched as untyped JSON so unknown fields
+# survive the round trip unchanged.
+serde_json = "1"
+# `config.toml` parsing.
+toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+# Human-readable durations (`"15m"`) in `config.toml`.
+humantime-serde = "1"
+# Structured routing decisions: which rung served, at what price, and why the
+# rungs above it were skipped.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
+# Credentials are read from the environment; `.env` is the local convenience.
+dotenvy = "0.15"
 
 [dev-dependencies]
-# Module integration tests exercise the real asynchronous in-memory TinyBus.
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
-# The GitHub release verifier passes an explicit empty module configuration.
-serde_json = "1"
+# Integration tests bind a loopback server to assert what reaches the wire.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+# Low-level HTTP for the loopback stub upstreams.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 
 [features]
 default = []
