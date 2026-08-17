@@ -14,11 +14,19 @@ POST /v1/chat/completions {"model": "reasoning", ...}
 
   rung 0  surplus     deepseek-v4-pro    ≤ $0.30/Mtok   cheapest seller $0.63  → skip
   rung 1  surplus     glm-5.2            ≤ $0.30/Mtok   cheapest seller $0.01  → serve
-  rung 2  surplus     deepseek-v4-flash  ≤ $0.15/Mtok
-  rung 3  openrouter  deepseek-v4-flash  ≤ $0.30/Mtok
+  rung 2  surplus     gpt-5.6-luna       ≤ $0.30/Mtok
+  rung 3  surplus     deepseek-v4-flash  ≤ $0.15/Mtok
+  rung 4  openrouter  deepseek-v4-flash  ≤ $0.30/Mtok
 
   x-ladder-rung: 1   x-ladder-provider: surplus   x-ladder-cap-per-1m: 0.3
 ```
+
+Two ladders ship in `config.example.toml`:
+
+| Ladder | Rungs, in order |
+| --- | --- |
+| `flash` | surplus `gpt-5.6-luna` → surplus `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` |
+| `reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` |
 
 ## Quick start
 
