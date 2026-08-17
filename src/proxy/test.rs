@@ -50,7 +50,10 @@ fn a_router_with_no_key_accepts_everyone() {
 fn the_configured_key_is_accepted_under_either_header() {
     let state = state_with("api_key = \"s3cret\"");
 
-    assert!(authorized(&state, &headers(&[("authorization", "Bearer s3cret")])));
+    assert!(authorized(
+        &state,
+        &headers(&[("authorization", "Bearer s3cret")])
+    ));
     // Anthropic clients send the key this way, and both surfaces accept both.
     assert!(authorized(&state, &headers(&[("x-api-key", "s3cret")])));
 }
@@ -60,10 +63,16 @@ fn a_wrong_or_absent_key_is_rejected() {
     let state = state_with("api_key = \"s3cret\"");
 
     assert!(!authorized(&state, &HeaderMap::new()));
-    assert!(!authorized(&state, &headers(&[("authorization", "Bearer wrong")])));
+    assert!(!authorized(
+        &state,
+        &headers(&[("authorization", "Bearer wrong")])
+    ));
     assert!(!authorized(&state, &headers(&[("x-api-key", "wrong")])));
     // The scheme matters: a bare key in Authorization is not a bearer token.
-    assert!(!authorized(&state, &headers(&[("authorization", "s3cret")])));
+    assert!(!authorized(
+        &state,
+        &headers(&[("authorization", "s3cret")])
+    ));
     // A prefix of the real key must not pass.
     assert!(!authorized(&state, &headers(&[("x-api-key", "s3cre")])));
 }
@@ -144,8 +153,12 @@ fn an_uncapped_rung_carries_no_ceiling_header() {
         prefer: Vec::new(),
     };
 
-    let response =
-        with_routing_headers(Response::new(axum::body::Body::empty()), "flash", &chosen, 0);
+    let response = with_routing_headers(
+        Response::new(axum::body::Body::empty()),
+        "flash",
+        &chosen,
+        0,
+    );
     assert!(response.headers().get(HEADER_CAP).is_none());
 }
 

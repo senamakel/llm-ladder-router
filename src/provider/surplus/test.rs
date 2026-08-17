@@ -40,7 +40,10 @@ fn parses_an_order_book_and_converts_micro_usd_to_usd() {
 
     assert_eq!(offer.provider, "Z.ai");
     // 9668 micro-USD per Mtok is $0.009668 per Mtok.
-    assert!((offer.completion_per_1m - 0.009_668).abs() < 1e-9, "{offer:?}");
+    assert!(
+        (offer.completion_per_1m - 0.009_668).abs() < 1e-9,
+        "{offer:?}"
+    );
     assert!((offer.prompt_per_1m - 0.003_076).abs() < 1e-9, "{offer:?}");
     assert!((offer.direct_completion_per_1m.unwrap() - 3.74).abs() < 1e-9);
     assert!(offer.usable);
@@ -205,7 +208,10 @@ fn a_genuine_caller_error_stops_the_ladder() {
 
 #[test]
 fn a_success_is_served() {
-    assert_eq!(classify(reqwest::StatusCode::OK, b"{}"), Disposition::Served);
+    assert_eq!(
+        classify(reqwest::StatusCode::OK, b"{}"),
+        Disposition::Served
+    );
 }
 
 #[test]

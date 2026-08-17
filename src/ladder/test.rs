@@ -116,7 +116,10 @@ fn steps_down_when_no_seller_is_under_the_ceiling() {
     assert_eq!(selection.chosen.unwrap().rung, 1);
     assert_eq!(selection.skipped.len(), 1);
     match &selection.skipped[0].reason {
-        SkipReason::NoSellerUnderCap { cap_per_1m, cheapest_per_1m } => {
+        SkipReason::NoSellerUnderCap {
+            cap_per_1m,
+            cheapest_per_1m,
+        } => {
             assert!((cap_per_1m - 0.30).abs() < f64::EPSILON);
             assert_eq!(*cheapest_per_1m, Some(0.63));
         }
@@ -142,7 +145,11 @@ fn walks_every_rung_of_a_four_rung_ladder_in_order() {
     assert_eq!(chosen.rung, 3);
     assert_eq!(chosen.provider, "openrouter");
     assert_eq!(
-        selection.skipped.iter().map(|skip| skip.rung).collect::<Vec<_>>(),
+        selection
+            .skipped
+            .iter()
+            .map(|skip| skip.rung)
+            .collect::<Vec<_>>(),
         vec![0, 1, 2]
     );
 }
@@ -263,7 +270,13 @@ fn tries_an_uncapped_rung_even_without_price_data() {
     .unwrap();
     let ladder = config.ladder("only").unwrap();
 
-    let selection = select(&config, ladder, &PriceTable::new(), &CreditState::new(), &[]);
+    let selection = select(
+        &config,
+        ladder,
+        &PriceTable::new(),
+        &CreditState::new(),
+        &[],
+    );
     let chosen = selection.chosen.unwrap();
 
     // Without a ceiling there is nothing to check prices against, so refusing
@@ -340,7 +353,10 @@ fn admitted_sub_providers_are_reported_cheapest_first() {
 
 #[test]
 fn the_cost_basis_decides_which_price_is_compared() {
-    let text = CONFIG.replace("name = \"reasoning\"", "name = \"reasoning\"\ncost_basis = \"prompt\"");
+    let text = CONFIG.replace(
+        "name = \"reasoning\"",
+        "name = \"reasoning\"\ncost_basis = \"prompt\"",
+    );
     let config = Config::parse(&text).unwrap();
     let ladder = config.ladder("reasoning").unwrap();
 
@@ -380,5 +396,8 @@ fn the_discount_never_reaches_the_hundred_that_matches_nothing() {
 
     // A ceiling of zero would imply a 100% discount, which Surplus rejects
     // outright and which would make an affordable rung unreachable.
-    assert_eq!(prices.discount_floor_pct(0.0, CostBasis::Completion), Some(99));
+    assert_eq!(
+        prices.discount_floor_pct(0.0, CostBasis::Completion),
+        Some(99)
+    );
 }

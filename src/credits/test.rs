@@ -9,7 +9,11 @@ fn a_provider_above_the_floor_is_usable() {
     let mut credits = CreditState::new();
     credits.set_balance("surplus", 74.67);
 
-    assert!(credits.unusable("surplus", "SURPLUS_API_KEY", 0.50).is_none());
+    assert!(
+        credits
+            .unusable("surplus", "SURPLUS_API_KEY", 0.50)
+            .is_none()
+    );
     assert!((credits.balance("surplus").unwrap().remaining_usd - 74.67).abs() < f64::EPSILON);
 }
 
@@ -19,7 +23,10 @@ fn a_provider_below_the_floor_reports_both_numbers() {
     credits.set_balance("surplus", 0.10);
 
     match credits.unusable("surplus", "SURPLUS_API_KEY", 0.50) {
-        Some(SkipReason::ExhaustedBalance { remaining_usd, floor_usd }) => {
+        Some(SkipReason::ExhaustedBalance {
+            remaining_usd,
+            floor_usd,
+        }) => {
             assert!((remaining_usd - 0.10).abs() < f64::EPSILON);
             assert!((floor_usd - 0.50).abs() < f64::EPSILON);
         }
@@ -32,7 +39,11 @@ fn a_balance_exactly_at_the_floor_is_usable() {
     let mut credits = CreditState::new();
     credits.set_balance("surplus", 0.50);
     // The floor is a minimum to have, not a minimum to exceed.
-    assert!(credits.unusable("surplus", "SURPLUS_API_KEY", 0.50).is_none());
+    assert!(
+        credits
+            .unusable("surplus", "SURPLUS_API_KEY", 0.50)
+            .is_none()
+    );
 }
 
 #[test]
@@ -67,7 +78,11 @@ fn an_unpolled_provider_is_left_usable() {
 
     // Refusing to route until the first poll lands would make startup fragile,
     // and a marketplace that reports no balance at all still works.
-    assert!(credits.unusable("surplus", "SURPLUS_API_KEY", 99.0).is_none());
+    assert!(
+        credits
+            .unusable("surplus", "SURPLUS_API_KEY", 99.0)
+            .is_none()
+    );
     assert!(credits.balance("surplus").is_none());
 }
 
@@ -75,5 +90,9 @@ fn an_unpolled_provider_is_left_usable() {
 fn a_zero_floor_never_excludes_anyone() {
     let mut credits = CreditState::new();
     credits.set_balance("surplus", 0.0);
-    assert!(credits.unusable("surplus", "SURPLUS_API_KEY", 0.0).is_none());
+    assert!(
+        credits
+            .unusable("surplus", "SURPLUS_API_KEY", 0.0)
+            .is_none()
+    );
 }

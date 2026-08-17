@@ -1,6 +1,6 @@
 //! Normalized price data.
 //!
-//! OpenRouter quotes USD per token and Surplus quotes micro-USD per million
+//! `OpenRouter` quotes USD per token and Surplus quotes micro-USD per million
 //! tokens. Both are converted to USD per million tokens at the edge so nothing
 //! downstream has to remember which marketplace a number came from.
 
@@ -111,20 +111,26 @@ impl ModelPrices {
     /// Surplus filters by discount rather than by absolute price, so a dollar
     /// ceiling has to be restated in those terms. Returns `None` when no offer
     /// publishes a direct price to discount against.
+    ///
+    /// The comparison is always against the direct *output* price, because that
+    /// is the only undiscounted figure the marketplace publishes; the ladder's
+    /// cost basis does not apply here.
     #[must_use]
-    pub fn discount_floor_pct(&self, cap: f64, basis: CostBasis) -> Option<u8> {
+    pub fn discount_floor_pct(&self, cap: f64) -> Option<u8> {
         let direct = self
             .offers
             .iter()
             .filter_map(|offer| offer.direct_completion_per_1m)
             .find(|direct| *direct > 0.0)?;
-        let _ = basis;
+
         let ratio = (cap / direct).clamp(0.0, 1.0);
         // Round down, so the filter never asks for more discount than the
         // ceiling actually implies and never skips an offer that fits.
-        let pct = ((1.0 - ratio) * 100.0).floor();
         // Surplus rejects everything at 100, which would make an affordable
         // rung unreachable, so 99 is the tightest usable filter.
-        Some(pct.clamp(0.0, 99.0) as u8)
+        let pct = ((1.0 - ratio) * 100.0).floor().clamp(0.0, 99.0);
+
+        // The clamp above bounds `pct` to 0..=99, so this conversion is exact.
+        Some(pct.round() as u8)
     }
 }

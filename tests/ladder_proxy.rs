@@ -74,7 +74,10 @@ async fn mock_openrouter(behavior: Behavior, price_per_1m: f64) -> (String, Arc<
     };
 
     let app = Router::new()
-        .route("/models/{author}/{model}/endpoints", get(openrouter_endpoints))
+        .route(
+            "/models/{author}/{model}/endpoints",
+            get(openrouter_endpoints),
+        )
         .route("/credits", get(openrouter_credits))
         .route("/chat/completions", post(openrouter_completions))
         .route("/messages", post(openrouter_completions))
@@ -257,7 +260,8 @@ async fn ask(router: &str, ladder: &str) -> reqwest::Response {
 #[tokio::test]
 async fn serves_from_the_first_rung_and_says_which_one_it_used() {
     let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
-    let (openrouter, or_recorded) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let (openrouter, or_recorded) =
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
     let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
 
     let response = ask(&router, "flash").await;
@@ -299,7 +303,10 @@ async fn skips_a_rung_priced_above_its_ceiling_without_calling_it() {
 #[tokio::test]
 async fn advances_the_ladder_when_the_first_rung_fails_upstream() {
     let (surplus, sp_recorded) = mock_surplus(
-        Behavior::Fail(StatusCode::SERVICE_UNAVAILABLE, "all sellers unhealthy".to_string()),
+        Behavior::Fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "all sellers unhealthy".to_string(),
+        ),
         0.10,
     )
     .await;
@@ -317,7 +324,10 @@ async fn advances_the_ladder_when_the_first_rung_fails_upstream() {
 #[tokio::test]
 async fn a_surplus_discount_rejection_advances_the_ladder() {
     let (surplus, _) = mock_surplus(
-        Behavior::Fail(StatusCode::NOT_FOUND, "minimum_discount_not_met".to_string()),
+        Behavior::Fail(
+            StatusCode::NOT_FOUND,
+            "minimum_discount_not_met".to_string(),
+        ),
         0.10,
     )
     .await;
@@ -356,21 +366,26 @@ async fn an_openrouter_max_price_rejection_advances_the_ladder() {
     let body: serde_json::Value = response.json().await.unwrap();
     let skipped = body["error"]["skipped"].as_array().unwrap();
     assert_eq!(skipped.len(), 2);
-    assert!(
-        skipped
-            .iter()
-            .all(|entry| entry["reason"].as_str().unwrap().contains("upstream failed"))
-    );
+    assert!(skipped.iter().all(|entry| {
+        entry["reason"]
+            .as_str()
+            .unwrap()
+            .contains("upstream failed")
+    }));
 }
 
 #[tokio::test]
 async fn a_caller_error_is_returned_without_being_replayed() {
     let (surplus, _) = mock_surplus(
-        Behavior::Fail(StatusCode::BAD_REQUEST, "messages must not be empty".to_string()),
+        Behavior::Fail(
+            StatusCode::BAD_REQUEST,
+            "messages must not be empty".to_string(),
+        ),
         0.10,
     )
     .await;
-    let (openrouter, or_recorded) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let (openrouter, or_recorded) =
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
     let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
 
     let response = ask(&router, "flash").await;
@@ -410,7 +425,8 @@ async fn an_openrouter_ceiling_travels_in_the_provider_object() {
         0.10,
     )
     .await;
-    let (openrouter, or_recorded) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let (openrouter, or_recorded) =
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
     let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
 
     assert_eq!(ask(&router, "flash").await.status(), 200);
@@ -576,7 +592,10 @@ async fn the_anthropic_surface_routes_the_same_ladders() {
 #[tokio::test]
 async fn the_anthropic_surface_falls_through_to_the_backstop_too() {
     let (surplus, _) = mock_surplus(
-        Behavior::Fail(StatusCode::NOT_FOUND, "minimum_discount_not_met".to_string()),
+        Behavior::Fail(
+            StatusCode::NOT_FOUND,
+            "minimum_discount_not_met".to_string(),
+        ),
         0.10,
     )
     .await;
@@ -603,5 +622,8 @@ async fn the_anthropic_surface_falls_through_to_the_backstop_too() {
     // OpenRouter's Anthropic surface lives at /messages and still takes the
     // ceiling in the body.
     assert_eq!(recorded.paths[0], "/messages");
-    assert_eq!(recorded.bodies[0]["provider"]["max_price"]["completion"], 0.30);
+    assert_eq!(
+        recorded.bodies[0]["provider"]["max_price"]["completion"],
+        0.30
+    );
 }

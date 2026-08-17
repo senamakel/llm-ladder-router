@@ -57,7 +57,10 @@ impl Config {
         }
 
         for (name, provider) in &self.providers {
-            check_price(provider.max_cost_per_1m, &format!("providers.{name}.max_cost_per_1m"))?;
+            check_price(
+                provider.max_cost_per_1m,
+                &format!("providers.{name}.max_cost_per_1m"),
+            )?;
         }
 
         let mut seen = std::collections::BTreeSet::new();

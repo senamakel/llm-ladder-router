@@ -69,7 +69,11 @@ fn admitted_offers_come_back_cheapest_first() {
 fn the_floor_is_the_cheapest_usable_offer_whatever_the_ceiling() {
     let mut unusable = offer("free-but-down", 0.0, 0.0);
     unusable.usable = false;
-    let prices = ModelPrices::new(vec![unusable, offer("dear", 0.5, 0.90), offer("less", 0.3, 0.63)]);
+    let prices = ModelPrices::new(vec![
+        unusable,
+        offer("dear", 0.5, 0.90),
+        offer("less", 0.3, 0.63),
+    ]);
 
     // The floor explains a skipped rung, so it ignores the ceiling but not
     // whether the seller can actually serve.
@@ -91,11 +95,20 @@ fn a_ceiling_becomes_the_discount_that_matches_it() {
     let prices = ModelPrices::new(vec![offer("Z.ai", 0.05, 0.09)]);
 
     // 0.30 against a 3.74 direct price leaves 8.02%, so 91% must be discounted.
-    assert_eq!(prices.discount_floor_pct(0.30, CostBasis::Completion), Some(91));
+    assert_eq!(
+        prices.discount_floor_pct(0.30, CostBasis::Completion),
+        Some(91)
+    );
     // A ceiling at the direct price needs no discount at all.
-    assert_eq!(prices.discount_floor_pct(3.74, CostBasis::Completion), Some(0));
+    assert_eq!(
+        prices.discount_floor_pct(3.74, CostBasis::Completion),
+        Some(0)
+    );
     // A ceiling above the direct price still needs none.
-    assert_eq!(prices.discount_floor_pct(99.0, CostBasis::Completion), Some(0));
+    assert_eq!(
+        prices.discount_floor_pct(99.0, CostBasis::Completion),
+        Some(0)
+    );
 }
 
 #[test]
@@ -121,13 +134,27 @@ fn the_table_holds_one_entry_per_provider_and_model() {
     let mut table = PriceTable::new();
     assert!(table.is_empty());
 
-    table.insert("surplus", "glm-5.2", ModelPrices::new(vec![offer("a", 0.1, 0.1)]));
-    table.insert("openrouter", "glm-5.2", ModelPrices::new(vec![offer("b", 0.2, 0.2)]));
+    table.insert(
+        "surplus",
+        "glm-5.2",
+        ModelPrices::new(vec![offer("a", 0.1, 0.1)]),
+    );
+    table.insert(
+        "openrouter",
+        "glm-5.2",
+        ModelPrices::new(vec![offer("b", 0.2, 0.2)]),
+    );
 
     assert_eq!(table.len(), 2);
     // Same model, different provider: these must not collide.
-    assert_eq!(table.get("surplus", "glm-5.2").unwrap().offers[0].provider, "a");
-    assert_eq!(table.get("openrouter", "glm-5.2").unwrap().offers[0].provider, "b");
+    assert_eq!(
+        table.get("surplus", "glm-5.2").unwrap().offers[0].provider,
+        "a"
+    );
+    assert_eq!(
+        table.get("openrouter", "glm-5.2").unwrap().offers[0].provider,
+        "b"
+    );
     assert!(table.get("surplus", "absent").is_none());
     assert!(table.get("absent", "glm-5.2").is_none());
 }
@@ -135,9 +162,20 @@ fn the_table_holds_one_entry_per_provider_and_model() {
 #[test]
 fn inserting_the_same_key_replaces_the_snapshot() {
     let mut table = PriceTable::new();
-    table.insert("surplus", "glm-5.2", ModelPrices::new(vec![offer("old", 0.1, 0.1)]));
-    table.insert("surplus", "glm-5.2", ModelPrices::new(vec![offer("new", 0.2, 0.2)]));
+    table.insert(
+        "surplus",
+        "glm-5.2",
+        ModelPrices::new(vec![offer("old", 0.1, 0.1)]),
+    );
+    table.insert(
+        "surplus",
+        "glm-5.2",
+        ModelPrices::new(vec![offer("new", 0.2, 0.2)]),
+    );
 
     assert_eq!(table.len(), 1);
-    assert_eq!(table.get("surplus", "glm-5.2").unwrap().offers[0].provider, "new");
+    assert_eq!(
+        table.get("surplus", "glm-5.2").unwrap().offers[0].provider,
+        "new"
+    );
 }
