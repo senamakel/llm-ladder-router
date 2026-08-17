@@ -106,8 +106,23 @@ pub fn build_with_credentials(
 /// Returns [`Error::Bind`] if the configured address cannot be bound, and
 /// [`Error::Serve`] if the server stops with an error.
 pub async fn serve(config: Config) -> Result<()> {
+    serve_with_credentials(config, &BTreeMap::new()).await
+}
+
+/// Serves using credentials the caller already holds.
+///
+/// The counterpart to [`build_with_credentials`], for deployments whose secrets
+/// come from somewhere other than the environment.
+///
+/// # Errors
+///
+/// As [`serve`].
+pub async fn serve_with_credentials(
+    config: Config,
+    credentials: &BTreeMap<String, String>,
+) -> Result<()> {
     let bind = config.server.bind.clone();
-    let (app, state) = build(config)?;
+    let (app, state) = build_with_credentials(config, credentials)?;
 
     // Load prices and balances before accepting traffic. Serving first would
     // open a cold-start window in which every capped rung is skipped for
