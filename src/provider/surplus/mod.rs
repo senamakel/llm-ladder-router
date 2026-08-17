@@ -126,7 +126,7 @@ pub fn balance_path() -> &'static str {
 ///
 /// A rung with a ceiling routes through the `/min{N}/` prefix, which is the
 /// only Surplus filter that actually binds. Note the prefix sits in a different
-/// place on each surface: `/min{N}/v1/chat/completions` for OpenAI, but
+/// place on each surface: `/min{N}/v1/chat/completions` for `OpenAI`, but
 /// `/anthropic/min{N}/v1/messages` for Anthropic. Both were verified against
 /// the live API; the other orderings 404.
 #[must_use]

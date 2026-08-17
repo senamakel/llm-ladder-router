@@ -1,4 +1,4 @@
-//! The OpenAI-compatible HTTP surface and the failover loop.
+//! The `OpenAI`-compatible HTTP surface and the failover loop.
 //!
 //! A request names a ladder in its `model` field. The router walks that ladder,
 //! dispatches to the first rung that can serve, and falls through on any
@@ -158,7 +158,7 @@ async fn list_models(AxumState(state): AxumState<State>) -> Json<serde_json::Val
     Json(serde_json::json!({ "object": "list", "data": data }))
 }
 
-/// The OpenAI-compatible entry point.
+/// The `OpenAI`-compatible entry point.
 async fn chat_completions(
     AxumState(state): AxumState<State>,
     headers: HeaderMap,

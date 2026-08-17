@@ -6,7 +6,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
-use crate::config::CostBasis;
 use crate::pricing::{ModelPrices, Offer};
 
 /// Four rungs across both providers, mirroring the shipped reasoning ladder.

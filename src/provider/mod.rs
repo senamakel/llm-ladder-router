@@ -216,7 +216,7 @@ impl Client {
     }
 }
 
-/// The sub-provider that served, as reported in an OpenAI-shaped response body.
+/// The sub-provider that served, as reported in an `OpenAI`-shaped response body.
 ///
 /// Both marketplaces put the terminal upstream in a top-level `provider` field.
 fn served_by(body: &[u8]) -> Option<String> {

@@ -27,7 +27,7 @@ struct EndpointsData {
 struct Endpoint {
     provider_name: String,
     /// The slug `provider.order` expects. It is not simply the lowercased
-    /// display name — "DigitalOcean" is tagged `digitalocean`, but a quantized
+    /// display name — "`DigitalOcean`" is tagged `digitalocean`, but a quantized
     /// endpoint is tagged `deepinfra/fp8` — so it must be read, not derived.
     tag: Option<String>,
     pricing: EndpointPricing,
