@@ -44,10 +44,27 @@ start() {
         return 0
     fi
 
+    # `config.toml` is git-ignored, so a fresh clone has none. Seed it from the
+    # committed example rather than failing: the example is a working default,
+    # and anything site-specific is edited in afterwards.
     if [ ! -f "$config" ]; then
-        echo "no config at $config" >&2
-        echo "copy the example first:  cp config.example.toml config.toml" >&2
-        return 1
+        if [ "$config" = "$root/config.toml" ] && [ -f "$root/config.example.toml" ]; then
+            cp "$root/config.example.toml" "$config"
+            echo "seeded $config from config.example.toml"
+            echo "review it before exposing this router beyond loopback"
+        else
+            echo "no config at $config" >&2
+            echo "copy the example first:  cp config.example.toml config.toml" >&2
+            return 1
+        fi
+    fi
+
+    # Credentials come from the environment; `.env` is the local convenience the
+    # binary loads for itself. Warn rather than fail, since a deployment may set
+    # them another way.
+    if [ ! -f "$root/.env" ] && [ -z "${SURPLUS_API_KEY:-}${OPENROUTER_API_KEY:-}" ]; then
+        echo "warning: no .env and no marketplace credentials in the environment" >&2
+        echo "         every rung will be skipped; see .env.example" >&2
     fi
 
     # Something else already on the port would answer our health check and make
