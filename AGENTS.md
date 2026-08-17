@@ -4,9 +4,8 @@ This file is the single source of truth for how humans and coding agents work
 in this repository. `CLAUDE.md` is a symlink to this file, so every agent reads
 the same instructions.
 
-When you generate a new project from this template, keep this file and adapt
-the project-specific parts (crate name, module map, feature flags, commands).
-Delete guidance that no longer applies rather than leaving it to rot.
+Keep it current: when a convention here stops matching the code, fix one or the
+other in the same change rather than leaving it to rot.
 
 ## Project Structure
 
@@ -222,9 +221,7 @@ Releases run from `.github/workflows/release.yml` via a manual
 `workflow_dispatch` with a `patch` / `minor` / `major` bump; `current` resumes
 an interrupted release after its version commit and tag exist. The workflow
 re-runs the full validation suite, computes the next version, updates
-`Cargo.toml` and `Cargo.lock`, commits and tags `vX.Y.Z`, builds the TinyBus
-module for every supported platform, pushes, and creates an immutable GitHub
-release with installable native packages.
+`Cargo.toml` and `Cargo.lock`, commits and tags `vX.Y.Z`, and pushes.
 
 Consequently:
 
@@ -233,8 +230,7 @@ Consequently:
 - Follow semantic versioning. Any change to the public surface that is not
   purely additive is a breaking change and needs a major bump (pre-1.0: a minor
   bump).
-- The module must be packageable for every release target — `main` should
-  always be green.
+- `main` should always be green.
 
 ## Agent Working Agreement
 
