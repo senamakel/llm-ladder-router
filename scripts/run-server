@@ -83,9 +83,14 @@ start() {
     # which is the whole point of running it in the background.
     ( cd "$root" && nohup ./target/debug/ladder --config "$config" >"$logfile" 2>&1 & echo $! >"$pidfile" )
 
-    # Wait for the port to answer rather than sleeping a fixed guess.
+    # The server loads every rung's order book and each provider's balance
+    # before it binds, so a request can never arrive while the price table is
+    # empty. That makes startup network-bound and slow — tens of seconds when a
+    # marketplace is sluggish — so wait generously rather than calling it a
+    # failure. Poll for the port instead of sleeping a fixed guess.
+    echo "loading prices and balances (this binds only once they are in)..."
     i=0
-    while [ "$i" -lt 100 ]; do
+    while [ "$i" -lt 900 ]; do
         if curl -fsS -m 1 "http://$address/healthz" >/dev/null 2>&1; then
             echo "listening on http://$address  (pid $(cat "$pidfile"))"
             echo "logs: $logfile"
