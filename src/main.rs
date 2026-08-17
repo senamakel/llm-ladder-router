@@ -32,8 +32,12 @@ async fn main() -> std::process::ExitCode {
 }
 
 async fn run() -> Result<()> {
-    let path = config_path(std::env::args().skip(1));
-    let config = Config::load(&path)?;
+    run_with(&config_path(std::env::args().skip(1))).await
+}
+
+/// Loads one configuration file and serves from it.
+async fn run_with(path: &str) -> Result<()> {
+    let config = Config::load(path)?;
     tracing::info!(
         path = %path,
         ladders = config.ladders.len(),
