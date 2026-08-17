@@ -415,10 +415,7 @@ fn an_exhausted_balance_names_both_figures() {
         remaining_usd: 0.1,
         floor_usd: 0.5,
     };
-    assert_eq!(
-        reason.to_string(),
-        "balance $0.10 is below the $0.50 floor"
-    );
+    assert_eq!(reason.to_string(), "balance $0.10 is below the $0.50 floor");
 }
 
 #[test]

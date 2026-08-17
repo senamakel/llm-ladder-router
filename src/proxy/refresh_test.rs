@@ -116,7 +116,14 @@ async fn a_failed_refresh_keeps_the_previous_snapshot() {
     let state = state_for(&base_url, Some("key"));
 
     refresh_prices_once(&state).await;
-    assert!(state.prices.read().await.get("surplus", "glm-5.2").is_some());
+    assert!(
+        state
+            .prices
+            .read()
+            .await
+            .get("surplus", "glm-5.2")
+            .is_some()
+    );
 
     refresh_prices_once(&state).await;
     assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -124,7 +131,12 @@ async fn a_failed_refresh_keeps_the_previous_snapshot() {
     // Stripping the rung of its price data would silently make it unroutable,
     // which is worse than routing on a slightly older snapshot.
     assert!(
-        state.prices.read().await.get("surplus", "glm-5.2").is_some(),
+        state
+            .prices
+            .read()
+            .await
+            .get("surplus", "glm-5.2")
+            .is_some(),
         "a failed refresh must not drop the previous prices"
     );
 }

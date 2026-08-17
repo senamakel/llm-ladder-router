@@ -100,7 +100,10 @@ mod test {
 
     #[test]
     fn the_first_config_wins() {
-        assert_eq!(parse(&["--config", "first.toml", "--config", "second.toml"]), "first.toml");
+        assert_eq!(
+            parse(&["--config", "first.toml", "--config", "second.toml"]),
+            "first.toml"
+        );
     }
 
     #[test]
