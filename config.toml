@@ -36,7 +36,7 @@ min_balance_usd = 0.50
 kind = "surplus"
 base_url = "https://api.surplusintelligence.ai"
 api_key_env = "SURPLUS_API_KEY"
-max_cost_per_1m = 0.50
+max_cost_per_1m = 0.60
 
 [providers.openrouter]
 kind = "openrouter"
