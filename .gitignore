@@ -26,4 +26,6 @@ worktrees/*
 
 # Background server pidfile and log from scripts/run-server
 .run/
-# config.toml is tracked: it holds no secrets, only env-var names.
+# Local router configuration. It carries the caller api_key and any
+# site-specific ceilings, so only config.example.toml is committed.
+config.toml
