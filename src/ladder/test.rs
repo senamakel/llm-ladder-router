@@ -473,11 +473,18 @@ fn a_rung_naming_a_provider_the_config_lacks_is_skipped() {
 
     let selection = select(&config, &ladder, &PriceTable::new(), &funded(), &[]);
 
-    assert_eq!(selection.skipped.len(), 3);
-    assert!(matches!(
-        selection.skipped[0].reason,
-        SkipReason::MissingCredential { .. }
-    ));
+    assert!(selection.chosen.is_none());
+    // The three Surplus rungs lose their provider; the OpenRouter rung is
+    // capped and has no prices, so nothing can serve.
+    assert_eq!(selection.skipped.len(), 4);
+    assert_eq!(
+        selection
+            .skipped
+            .iter()
+            .filter(|skip| matches!(skip.reason, SkipReason::MissingCredential { .. }))
+            .count(),
+        3
+    );
 }
 
 #[test]
