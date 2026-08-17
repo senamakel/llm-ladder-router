@@ -215,3 +215,68 @@ async fn an_unreadable_balance_leaves_the_provider_usable() {
     assert!(credits.balance("surplus").is_none());
     assert!(credits.unusable("surplus", "K", 99.0).is_none());
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_periodic_loops_keep_refreshing() {
+    let (base_url, calls) = upstream(usize::MAX).await;
+    let mut config_text = format!(
+        r#"
+        [pricing]
+        refresh = "1s"
+
+        [credits]
+        refresh = "1s"
+
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{base_url}"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "flash"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.2"
+          max_cost_per_1m = 0.30
+        "#
+    );
+    config_text.push('\n');
+
+    let config = Config::parse(&config_text).unwrap();
+    let credentials = BTreeMap::from([("surplus".to_string(), "key".to_string())]);
+    let (_, state) = build_with_credentials(config, &credentials).unwrap();
+
+    super::spawn(state.clone());
+
+    // Each loop sleeps first, so nothing has run yet.
+    tokio::task::yield_now().await;
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    // Advance past two intervals and let the loops run.
+    for _ in 0..2 {
+        tokio::time::advance(std::time::Duration::from_millis(1_100)).await;
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    assert!(calls.load(Ordering::SeqCst) >= 1, "the price loop never ran");
+    assert!(state.prices.read().await.get("surplus", "glm-5.2").is_some());
+}
+
+#[tokio::test]
+async fn a_model_whose_provider_has_no_client_is_ignored() {
+    let (base_url, _) = upstream(usize::MAX).await;
+    let mut state = state_for(&base_url, Some("key"));
+
+    // A ladder naming a provider with no client cannot be built through
+    // `Config::parse`, so it is constructed here directly.
+    let mut clients = (*state.clients).clone();
+    clients.remove("surplus");
+    state.clients = Arc::new(clients);
+
+    refresh_prices_once(&state).await;
+
+    // Nothing to fetch, nothing recorded, and no panic.
+    assert!(state.prices.read().await.is_empty());
+}
