@@ -460,3 +460,60 @@ fn an_upstream_failure_carries_the_detail_through() {
         "upstream failed: 503 all sellers unhealthy"
     );
 }
+
+// --- Branches a validated configuration cannot reach ----------------------
+
+#[test]
+fn a_rung_naming_a_provider_the_config_lacks_is_skipped() {
+    // Configuration validation rejects this, so it is only reachable by
+    // assembling a `Config` by hand. The engine must still not panic.
+    let mut config = config();
+    let ladder = config.ladder("reasoning").unwrap().clone();
+    config.providers.remove("surplus");
+
+    let selection = select(&config, &ladder, &PriceTable::new(), &funded(), &[]);
+
+    assert_eq!(selection.skipped.len(), 3);
+    assert!(matches!(
+        selection.skipped[0].reason,
+        SkipReason::MissingCredential { .. }
+    ));
+}
+
+#[test]
+fn an_uncapped_rung_whose_sellers_are_all_down_is_skipped() {
+    let config = Config::parse(
+        r#"
+        [providers.openrouter]
+        kind = "openrouter"
+        base_url = "https://openrouter.ai/api/v1"
+        api_key_env = "OPENROUTER_API_KEY"
+
+        [[ladders]]
+        name = "only"
+          [[ladders.rungs]]
+          provider = "openrouter"
+          model = "m"
+        "#,
+    )
+    .unwrap();
+    let ladder = config.ladder("only").unwrap();
+
+    let mut down = offer("seller", 0.01);
+    down.usable = false;
+    let mut table = PriceTable::new();
+    table.insert("openrouter", "m", ModelPrices::new(vec![down]));
+
+    let selection = select(&config, ladder, &table, &CreditState::new(), &[]);
+
+    // No ceiling, but nobody can serve: that is a failure to try, not a price
+    // decision, and it must not be reported as a chosen rung.
+    assert!(selection.chosen.is_none());
+    match &selection.skipped[0].reason {
+        SkipReason::NoSellerUnderCap { cap_per_1m, cheapest_per_1m } => {
+            assert!(cap_per_1m.is_infinite());
+            assert_eq!(*cheapest_per_1m, None);
+        }
+        other => panic!("expected NoSellerUnderCap, got {other:?}"),
+    }
+}
