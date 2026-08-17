@@ -44,6 +44,7 @@
 //! # Ok::<(), llm_ladder_router::Error>(())
 //! ```
 
+pub mod cli;
 pub mod config;
 pub mod credits;
 pub mod error;

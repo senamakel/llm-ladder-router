@@ -28,7 +28,7 @@ path = "src/lib.rs"
 # The OpenAI-compatible proxy. Kept deliberately thin: it parses arguments and
 # hands straight to `proxy::serve`, so the routing logic stays library-testable.
 name = "ladder"
-path = "src/main.rs"
+path = "bin/ladder.rs"
 
 [dependencies]
 # Derive macros for the crate-wide error type in `src/error/mod.rs`. Every
