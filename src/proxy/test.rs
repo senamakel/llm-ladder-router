@@ -172,3 +172,196 @@ async fn the_ladders_are_listed_as_models() {
     assert_eq!(body["data"][0]["owned_by"], "llm-ladder-router");
     assert_eq!(body["data"][0]["rungs"], 1);
 }
+
+/// A loopback Surplus good enough for `serve` to start against.
+async fn upstream() -> String {
+    use axum::routing::{get, post};
+
+    let app = axum::Router::new()
+        .route(
+            "/api/markets/{model}",
+            get(|| async {
+                Json(serde_json::json!({
+                    "offers": [{
+                        "provider": "Z.ai",
+                        "price_input_per_1m": 3076.0,
+                        "price_output_per_1m": 9668.0,
+                        "direct_output_per_1m": 3_740_000.0,
+                        "available": true,
+                        "healthy": true,
+                    }]
+                }))
+            }),
+        )
+        .route(
+            "/v1/buyer/me",
+            get(|| async { Json(serde_json::json!({ "balance_usdc": "74673082" })) }),
+        )
+        .route(
+            "/{prefix}/v1/chat/completions",
+            post(|| async {
+                Json(serde_json::json!({ "provider": "Z.ai", "choices": [] }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{address}")
+}
+
+/// A port nothing is listening on right now.
+async fn free_port() -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    port
+}
+
+fn serving_config(bind: &str, upstream: &str) -> Config {
+    Config::parse(&format!(
+        r#"
+        [server]
+        bind = "{bind}"
+
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{upstream}"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "flash"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.2"
+          max_cost_per_1m = 0.30
+        "#
+    ))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn serve_loads_prices_before_it_accepts_traffic() {
+    let upstream = upstream().await;
+    let port = free_port().await;
+    let bind = format!("127.0.0.1:{port}");
+
+    let server = tokio::spawn(serve(serving_config(&bind, &upstream)));
+
+    // Wait for the port to answer. Because `serve` refreshes before binding, a
+    // health check that succeeds proves the price table is already populated —
+    // which is the whole point of that ordering.
+    let mut answered = false;
+    for _ in 0..100 {
+        if reqwest::get(format!("http://{bind}/healthz")).await.is_ok() {
+            answered = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(answered, "server never bound");
+
+    // The first request must route rather than fail for want of price data.
+    let response = reqwest::Client::new()
+        .post(format!("http://{bind}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "flash",
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-ladder-provider"], "surplus");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serve_reports_an_address_it_cannot_bind() {
+    let upstream = upstream().await;
+    let held = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let taken = held.local_addr().unwrap().to_string();
+
+    let error = serve(serving_config(&taken, &upstream)).await.unwrap_err();
+
+    match error {
+        Error::Bind { address, .. } => assert_eq!(address, taken),
+        other => panic!("expected Bind, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_request_without_a_model_field_is_rejected() {
+    let state = state_with("bind = \"127.0.0.1:6969\"");
+    let response = route(state, &HeaderMap::new(), serde_json::json!({}), Wire::OpenAi).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_request_naming_an_unknown_ladder_lists_the_known_ones() {
+    let state = state_with("bind = \"127.0.0.1:6969\"");
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "nope" }),
+        Wire::OpenAi,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains("unknown ladder nope"), "{message}");
+    assert!(message.contains("flash"), "{message}");
+}
+
+#[tokio::test]
+async fn an_unauthenticated_request_never_reaches_a_ladder() {
+    let state = state_with("api_key = \"s3cret\"");
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash" }),
+        Wire::Anthropic,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_ladder_with_no_usable_rung_explains_itself() {
+    // No price data and no credential, so the single rung cannot be tried.
+    let state = state_with("bind = \"127.0.0.1:6969\"");
+    refresh_credits_once(&state).await;
+
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash" }),
+        Wire::OpenAi,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let skipped = body["error"]["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 1);
+    assert!(
+        skipped[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("OPENROUTER_API_KEY"),
+        "{skipped:?}"
+    );
+}
