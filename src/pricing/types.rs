@@ -124,13 +124,18 @@ impl ModelPrices {
             .find(|direct| *direct > 0.0)?;
 
         let ratio = (cap / direct).clamp(0.0, 1.0);
-        // Round down, so the filter never asks for more discount than the
-        // ceiling actually implies and never skips an offer that fits.
-        // Surplus rejects everything at 100, which would make an affordable
-        // rung unreachable, so 99 is the tightest usable filter.
-        let pct = ((1.0 - ratio) * 100.0).floor().clamp(0.0, 99.0);
+        let target = (1.0 - ratio) * 100.0;
 
-        // The clamp above bounds `pct` to 0..=99, so this conversion is exact.
-        Some(pct.round() as u8)
+        // The largest whole percentage the ceiling justifies. Searching down
+        // from 99 rounds toward the looser filter, so the discount asked for is
+        // never more than the ceiling implies and never excludes an offer that
+        // fits. Surplus rejects everything at 100, which would make an
+        // affordable rung unreachable, so 99 is the tightest usable filter.
+        Some(
+            (0..=99_u8)
+                .rev()
+                .find(|candidate| f64::from(*candidate) <= target)
+                .unwrap_or(0),
+        )
     }
 }
