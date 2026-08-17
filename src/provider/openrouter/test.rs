@@ -1,4 +1,4 @@
-//! Unit tests for the OpenRouter dialect, against payloads captured from the
+//! Unit tests for the `OpenRouter` dialect, against payloads captured from the
 //! live API on 2026-08-18.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -106,7 +106,10 @@ fn each_wire_format_has_its_own_path() {
 #[test]
 fn the_ceiling_travels_in_the_provider_object() {
     let mut body = serde_json::json!({ "model": "flash", "temperature": 0.5 });
-    apply_routing(&mut body, &chosen(Some(0.30), vec!["deepinfra".to_string()]));
+    apply_routing(
+        &mut body,
+        &chosen(Some(0.30), vec!["deepinfra".to_string()]),
+    );
 
     assert_eq!(body["model"], "deepseek/deepseek-v4-flash");
     assert_eq!(body["provider"]["max_price"]["completion"], 0.30);
@@ -187,5 +190,8 @@ fn server_errors_and_rate_limits_advance_the_ladder() {
 
 #[test]
 fn a_success_is_served() {
-    assert_eq!(classify(reqwest::StatusCode::OK, b"{}"), Disposition::Served);
+    assert_eq!(
+        classify(reqwest::StatusCode::OK, b"{}"),
+        Disposition::Served
+    );
 }

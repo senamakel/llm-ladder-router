@@ -103,10 +103,10 @@ impl Default for Server {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
-    /// OpenRouter, which enforces `provider.max_price` directly.
+    /// `OpenRouter`, which enforces `provider.max_price` directly.
     ///
     /// Spelled as one word, which is how the marketplace spells itself;
-    /// `open_router` is accepted too so a snake_case habit is not punished.
+    /// `open_router` is accepted too so a `snake_case` habit is not punished.
     #[serde(rename = "openrouter", alias = "open_router")]
     OpenRouter,
     /// Surplus Intelligence, whose cap is expressed as a minimum discount.
@@ -130,7 +130,7 @@ pub struct Provider {
     /// ladder a request took. It combines with [`Rung::max_cost_per_1m`] by
     /// taking the tighter of the two.
     pub max_cost_per_1m: Option<f64>,
-    /// Extra headers sent on every request, such as OpenRouter attribution.
+    /// Extra headers sent on every request, such as `OpenRouter` attribution.
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
 }

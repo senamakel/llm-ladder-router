@@ -1,6 +1,6 @@
-//! The OpenRouter dialect.
+//! The `OpenRouter` dialect.
 //!
-//! OpenRouter publishes a per-sub-provider price list and enforces a price
+//! `OpenRouter` publishes a per-sub-provider price list and enforces a price
 //! ceiling directly, so a rung's dollar cap survives all the way to the wire.
 //! An unsatisfiable cap comes back as a 404 naming the max price, which is a
 //! reason to advance the ladder rather than a caller error.
@@ -56,7 +56,7 @@ struct CreditsData {
 
 /// Parses an endpoints payload into normalized offers.
 ///
-/// OpenRouter quotes USD per token, so every price is scaled to USD per million
+/// `OpenRouter` quotes USD per token, so every price is scaled to USD per million
 /// tokens here and nowhere else.
 ///
 /// # Errors
@@ -153,7 +153,7 @@ pub fn apply_routing(body: &mut serde_json::Value, chosen: &Chosen) {
     }
 }
 
-/// Whether an error response is OpenRouter's way of saying the rung cannot be
+/// Whether an error response is `OpenRouter`'s way of saying the rung cannot be
 /// served, rather than the caller's mistake.
 #[must_use]
 pub fn classify(status: reqwest::StatusCode, body: &[u8]) -> Disposition {

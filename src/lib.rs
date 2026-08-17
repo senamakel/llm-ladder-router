@@ -11,7 +11,7 @@
 //! the two applies.
 //!
 //! Two marketplaces are supported, and their differences are real rather than
-//! cosmetic. OpenRouter publishes a per-sub-provider price list and enforces a
+//! cosmetic. `OpenRouter` publishes a per-sub-provider price list and enforces a
 //! price ceiling directly. Surplus Intelligence publishes a full order book but
 //! ignores its documented price-cap parameters, so a ceiling is restated as the
 //! equivalent minimum discount, which it does enforce. See

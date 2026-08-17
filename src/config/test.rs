@@ -59,12 +59,21 @@ fn parses_a_full_configuration() {
     let config = Config::parse(EXAMPLE).unwrap();
 
     assert_eq!(config.server.bind, "0.0.0.0:9000");
-    assert_eq!(config.server.request_timeout, std::time::Duration::from_secs(30));
-    assert_eq!(config.pricing.stale_after, std::time::Duration::from_secs(45 * 60));
+    assert_eq!(
+        config.server.request_timeout,
+        std::time::Duration::from_secs(30)
+    );
+    assert_eq!(
+        config.pricing.stale_after,
+        std::time::Duration::from_secs(45 * 60)
+    );
     assert!((config.credits.min_balance_usd - 1.5).abs() < f64::EPSILON);
 
     assert_eq!(config.providers["surplus"].kind, ProviderKind::Surplus);
-    assert_eq!(config.providers["openrouter"].kind, ProviderKind::OpenRouter);
+    assert_eq!(
+        config.providers["openrouter"].kind,
+        ProviderKind::OpenRouter
+    );
     assert_eq!(
         config.providers["openrouter"].headers["HTTP-Referer"],
         "https://example.test/"
@@ -80,7 +89,10 @@ fn parses_a_full_configuration() {
 fn defaults_the_cost_basis_to_completion() {
     let config = Config::parse(EXAMPLE).unwrap();
     // The reasoning ladder omits `cost_basis` entirely.
-    assert_eq!(config.ladder("reasoning").unwrap().cost_basis, CostBasis::Completion);
+    assert_eq!(
+        config.ladder("reasoning").unwrap().cost_basis,
+        CostBasis::Completion
+    );
 }
 
 #[test]
@@ -102,8 +114,14 @@ fn applies_defaults_when_optional_sections_are_absent() {
     .unwrap();
 
     assert_eq!(config.server.bind, "127.0.0.1:6969");
-    assert_eq!(config.pricing.refresh, std::time::Duration::from_secs(15 * 60));
-    assert_eq!(config.credits.refresh, std::time::Duration::from_secs(5 * 60));
+    assert_eq!(
+        config.pricing.refresh,
+        std::time::Duration::from_secs(15 * 60)
+    );
+    assert_eq!(
+        config.credits.refresh,
+        std::time::Duration::from_secs(5 * 60)
+    );
     assert!(config.credits.min_balance_usd.abs() < f64::EPSILON);
 }
 
@@ -162,7 +180,10 @@ fn a_rung_with_neither_ceiling_is_uncapped() {
         "#,
     )
     .unwrap();
-    assert_eq!(uncapped.cap_for(&uncapped.ladder("only").unwrap().rungs[0]), None);
+    assert_eq!(
+        uncapped.cap_for(&uncapped.ladder("only").unwrap().rungs[0]),
+        None
+    );
 }
 
 #[test]
@@ -184,7 +205,11 @@ fn rejects_a_rung_naming_an_undefined_provider() {
     .unwrap_err();
 
     match error {
-        Error::UnknownProvider { ladder, rung, provider } => {
+        Error::UnknownProvider {
+            ladder,
+            rung,
+            provider,
+        } => {
             assert_eq!(ladder, "typo");
             assert_eq!(rung, 0);
             assert_eq!(provider, "openrouetr");
@@ -332,11 +357,8 @@ fn reports_the_path_when_the_file_is_missing() {
 
 #[test]
 fn the_shipped_example_config_is_valid() {
-    let text = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/config.example.toml"
-    ))
-    .unwrap();
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+        .unwrap();
     let config = Config::parse(&text).unwrap();
 
     // The example is the documentation for the two ladders the router ships

@@ -1,6 +1,6 @@
 //! Normalized price data.
 //!
-//! OpenRouter quotes USD per token and Surplus quotes micro-USD per million
+//! `OpenRouter` quotes USD per token and Surplus quotes micro-USD per million
 //! tokens. Both are converted to USD per million tokens at the edge so nothing
 //! downstream has to remember which marketplace a number came from.
 

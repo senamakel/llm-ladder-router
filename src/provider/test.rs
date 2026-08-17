@@ -39,7 +39,10 @@ fn a_blank_credential_counts_as_absent() {
             reqwest::Client::new(),
             Some(blank.to_string()),
         );
-        assert!(!client.has_credential(), "{blank:?} should not count as a key");
+        assert!(
+            !client.has_credential(),
+            "{blank:?} should not count as a key"
+        );
     }
 }
 
@@ -84,7 +87,10 @@ fn a_body_without_a_provider_field_names_nobody() {
 
 #[test]
 fn statuses_are_classified_by_who_is_at_fault() {
-    assert_eq!(classify_status(reqwest::StatusCode::OK), Disposition::Served);
+    assert_eq!(
+        classify_status(reqwest::StatusCode::OK),
+        Disposition::Served
+    );
     assert_eq!(
         classify_status(reqwest::StatusCode::NO_CONTENT),
         Disposition::Served

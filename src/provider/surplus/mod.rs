@@ -72,9 +72,7 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
             tag: None,
             prompt_per_1m: offer.price_input_per_1m.unwrap_or(0.0) / MICRO_USD,
             completion_per_1m: offer.price_output_per_1m.unwrap_or(0.0) / MICRO_USD,
-            direct_completion_per_1m: offer
-                .direct_output_per_1m
-                .map(|direct| direct / MICRO_USD),
+            direct_completion_per_1m: offer.direct_output_per_1m.map(|direct| direct / MICRO_USD),
             usable: offer.available && offer.healthy,
         })
         .collect();

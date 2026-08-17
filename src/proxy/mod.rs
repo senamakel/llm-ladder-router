@@ -115,7 +115,10 @@ pub async fn serve(config: Config) -> Result<()> {
     tracing::info!("loading prices and balances before accepting traffic");
     refresh_credits_once(&state).await;
     refresh_prices_once(&state).await;
-    tracing::info!(models = state.prices.read().await.len(), "initial refresh complete");
+    tracing::info!(
+        models = state.prices.read().await.len(),
+        "initial refresh complete"
+    );
 
     refresh::spawn(state.clone());
 
@@ -200,12 +203,7 @@ fn authorized(state: &State, headers: &HeaderMap) -> bool {
 }
 
 /// Walks a ladder for one request on one wire format.
-async fn route(
-    state: State,
-    headers: &HeaderMap,
-    body: serde_json::Value,
-    wire: Wire,
-) -> Response {
+async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire: Wire) -> Response {
     if !authorized(&state, headers) {
         return problem(
             StatusCode::UNAUTHORIZED,
@@ -232,7 +230,10 @@ async fn route(
             .collect();
         return problem(
             StatusCode::BAD_REQUEST,
-            &format!("unknown ladder {name}; known ladders are {}", known.join(", ")),
+            &format!(
+                "unknown ladder {name}; known ladders are {}",
+                known.join(", ")
+            ),
             &[],
         );
     };
