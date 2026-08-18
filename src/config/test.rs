@@ -415,9 +415,24 @@ fn the_shipped_example_config_is_valid() {
     );
 
     // Every rung asks for depth, and the effort each one asks for is the one
-    // its model family accepts.
-    assert_eq!(max.effort_for(&max.rungs[0]).as_deref(), Some("high"));
-    assert_eq!(max.effort_for(&max.rungs[2]).as_deref(), Some("xhigh"));
+    // its model family accepts. Named on the rung rather than inherited, so
+    // that reading a rung tells you what it will send.
+    assert_eq!(
+        max.rungs
+            .iter()
+            .map(|rung| max.effort_for(rung))
+            .collect::<Vec<_>>(),
+        ["high", "high", "xhigh", "high"]
+            .map(|effort| Some(effort.to_string()))
+            .to_vec()
+    );
+    for rung in &max.rungs {
+        assert!(
+            rung.reasoning_effort.is_some(),
+            "`{}` leaves its depth to the ladder default",
+            rung.model
+        );
+    }
 
     // The provider ceilings must not clamp it. The tighter of the two wins, so
     // a marketplace ceiling below a rung's own would silently undo the price

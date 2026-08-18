@@ -23,11 +23,11 @@ POST /v1/chat/completions {"model": "reasoning", ...}
 
 Three ladders ship in `config.example.toml`:
 
-| Ladder | Rungs, in order | Ceilings |
-| --- | --- | --- |
-| `flash` | surplus `gpt-5.6-luna` → surplus `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 / 0.15 / 0.30 |
-| `reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 |
-| `max-reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 |
+| Ladder | Rungs, in order | Ceilings | Depth |
+| --- | --- | --- | --- |
+| `flash` | surplus `gpt-5.6-luna` → surplus `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 / 0.15 / 0.30 | — |
+| `reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 | — |
+| `max-reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 | `high` / `high` / `xhigh` / `high` |
 
 `max-reasoning` is the odd one and deliberately so: it pays roughly three times
 what `reasoning` pays, and it asks for depth — `reasoning_effort = "high"` on

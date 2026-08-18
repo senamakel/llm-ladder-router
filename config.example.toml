@@ -160,16 +160,22 @@ cost_basis = "completion"
 [[ladders]]
 name = "max-reasoning"
 cost_basis = "completion"
+# The fallback, so a rung added in a hurry still asks for depth. Every rung
+# below names its own anyway: which words a model accepts is a fact about that
+# model, and reading it off the rung beats inferring it from a default two
+# screens up.
 reasoning_effort = "high"
 
   [[ladders.rungs]]
   provider = "surplus"
   model = "deepseek-v4-pro"
+  reasoning_effort = "high"
   max_cost_per_1m = 1.00
 
   [[ladders.rungs]]
   provider = "surplus"
   model = "glm-5.2"
+  reasoning_effort = "high"
   max_cost_per_1m = 1.00
 
   [[ladders.rungs]]
@@ -182,4 +188,5 @@ reasoning_effort = "high"
   [[ladders.rungs]]
   provider = "openrouter"
   model = "deepseek/deepseek-v4-pro"
+  reasoning_effort = "high"
   max_cost_per_1m = 1.00
