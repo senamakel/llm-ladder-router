@@ -430,7 +430,10 @@ fn reasoning_effort_defaults_down_the_ladder_and_a_rung_overrides_it() {
 
     let ladder = config.ladder("max-reasoning").unwrap();
     assert_eq!(ladder.effort_for(&ladder.rungs[0]).as_deref(), Some("high"));
-    assert_eq!(ladder.effort_for(&ladder.rungs[1]).as_deref(), Some("xhigh"));
+    assert_eq!(
+        ladder.effort_for(&ladder.rungs[1]).as_deref(),
+        Some("xhigh")
+    );
 }
 
 /// A ladder that declares nothing asks for nothing, so every ladder written

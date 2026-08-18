@@ -208,6 +208,7 @@ fn chosen() -> Chosen {
         cheapest_per_1m: None,
         min_discount_pct: None,
         prefer: vec!["deepinfra".to_string()],
+        reasoning_effort: None,
     }
 }
 
@@ -296,4 +297,54 @@ async fn a_trailing_slash_on_the_base_url_does_not_double_up() {
 
     // A doubled slash would 404; this succeeding is the assertion.
     assert!(client.fetch_balance().await.is_ok());
+}
+
+/// A declared effort reaches the body the upstream actually receives.
+#[test]
+fn a_declared_effort_is_injected_on_the_openai_surface() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("xhigh".to_string());
+    let mut body = serde_json::json!({ "model": "max-reasoning", "messages": [] });
+
+    apply_reasoning_effort(&mut body, &chosen, Wire::OpenAi);
+
+    assert_eq!(body["reasoning_effort"], "xhigh");
+}
+
+/// The caller always wins: a request that asked to think less must not be made
+/// expensive by the ladder it happened to select.
+#[test]
+fn a_callers_own_depth_is_never_overwritten() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("xhigh".to_string());
+
+    let mut explicit = serde_json::json!({ "messages": [], "reasoning_effort": "low" });
+    apply_reasoning_effort(&mut explicit, &chosen, Wire::OpenAi);
+    assert_eq!(explicit["reasoning_effort"], "low");
+
+    // The other spelling counts as the caller having decided, too.
+    let mut structured = serde_json::json!({ "messages": [], "reasoning": { "effort": "low" } });
+    apply_reasoning_effort(&mut structured, &chosen, Wire::OpenAi);
+    assert!(structured.get("reasoning_effort").is_none());
+}
+
+/// Anthropic spells depth as a `thinking` budget, so inventing an `OpenAI` field
+/// there would be translating between dialects rather than relaying.
+#[test]
+fn the_anthropic_surface_is_left_alone() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("high".to_string());
+    let mut body = serde_json::json!({ "messages": [] });
+
+    apply_reasoning_effort(&mut body, &chosen, Wire::Anthropic);
+
+    assert!(body.get("reasoning_effort").is_none());
+}
+
+/// A ladder that declares nothing changes nothing.
+#[test]
+fn no_declared_effort_inserts_nothing() {
+    let mut body = serde_json::json!({ "messages": [] });
+    apply_reasoning_effort(&mut body, &chosen(), Wire::OpenAi);
+    assert!(body.get("reasoning_effort").is_none());
 }

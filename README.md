@@ -92,7 +92,8 @@ translated** — an Anthropic request reaches an Anthropic endpoint unchanged an
 its response comes back unchanged. Parameters this router does not model pass
 through untouched.
 
-The `model` field names the **ladder** (`flash`, `reasoning`), not a model.
+The `model` field names the **ladder** (`flash`, `reasoning`, `max-reasoning`),
+not a model.
 
 Authenticate with `Authorization: Bearer <key>` or `x-api-key: <key>`; both work
 on both surfaces. The key is `server.api_key` in `config.toml`, or
@@ -101,7 +102,8 @@ accepts every caller, which is only appropriate on a loopback bind.
 
 Every response says how it was routed: `x-ladder-name`, `x-ladder-rung`,
 `x-ladder-provider`, `x-ladder-model`, `x-ladder-sub-provider`,
-`x-ladder-cap-per-1m`, `x-ladder-skipped`. When no rung can serve, the 502 body
+`x-ladder-cap-per-1m`, `x-ladder-skipped`, and `x-ladder-reasoning-effort` when
+the ladder asked for a reasoning depth. When no rung can serve, the 502 body
 lists each rung and why it was passed over.
 
 ## Ceilings
@@ -128,6 +130,39 @@ the ceiling, its provider's balance is spent, its credential is missing, or its
 price data is missing or stale. A rung that *is* tried and fails upstream
 advances the ladder; a request the caller got wrong is returned as-is rather
 than replayed and charged again at every rung.
+
+## Reasoning depth
+
+A ladder is a price band, and it can also be a **depth**. `reasoning_effort` on
+a ladder is injected into every request that did not already carry one; a rung
+overrides it, because the accepted values belong to the model family rather than
+to the ladder — `xhigh` is understood by some reasoning models and rejected by
+others, and a rejected value is a 400 the failover loop hands back to the caller
+rather than stepping past.
+
+```toml
+[[ladders]]
+name = "max-reasoning"
+reasoning_effort = "high"       # every rung, unless it says otherwise
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "gpt-5.6-luna"
+  reasoning_effort = "xhigh"    # ...the one family that takes more
+```
+
+Three rules hold. **The caller always wins** — a body already carrying
+`reasoning_effort` or `reasoning` is left alone, so a request asking for a
+shallow answer is not made expensive by the ladder it selected. **Only on the
+OpenAI surface**, since Anthropic spells depth as a `thinking` token budget and
+inventing one from an effort word would be translating rather than relaying.
+And a ladder that declares nothing inserts nothing, so every ladder written
+before this field behaves exactly as it did.
+
+The shipped `max-reasoning` ladder is the intended use: higher ceilings than
+`reasoning`, and no rung below a reasoning model — a ladder whose last rung is a
+fast model would answer a max-reasoning request with the cheapest thing
+available, which is the failure it exists to avoid.
 
 ## Session pinning
 

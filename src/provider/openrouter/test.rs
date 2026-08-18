@@ -19,6 +19,7 @@ fn chosen(cap: Option<f64>, prefer: Vec<String>) -> Chosen {
         cheapest_per_1m: None,
         min_discount_pct: Some(91),
         prefer,
+        reasoning_effort: None,
     }
 }
 

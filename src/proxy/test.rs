@@ -135,6 +135,7 @@ fn a_routing_decision_is_stamped_onto_the_response() {
         cheapest_per_1m: Some(0.009),
         min_discount_pct: Some(91),
         prefer: Vec::new(),
+        reasoning_effort: None,
     };
 
     let response = with_routing_headers(
@@ -166,6 +167,7 @@ fn an_uncapped_rung_carries_no_ceiling_header() {
         cheapest_per_1m: None,
         min_discount_pct: None,
         prefer: Vec::new(),
+        reasoning_effort: None,
     };
 
     let response = with_routing_headers(
