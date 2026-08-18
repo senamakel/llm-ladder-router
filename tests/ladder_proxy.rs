@@ -627,3 +627,182 @@ async fn the_anthropic_surface_falls_through_to_the_backstop_too() {
         0.30
     );
 }
+
+/// Records which sub-provider each mock call was steered to.
+fn steered_to(recorded: &Arc<Mutex<Recorded>>, index: usize) -> Option<String> {
+    recorded.lock().unwrap().bodies[index]["provider"]["order"][0]
+        .as_str()
+        .map(str::to_string)
+}
+
+#[tokio::test]
+async fn a_session_stays_on_the_rung_that_served_it() {
+    // Surplus is affordable, so an unpinned request takes rung 0.
+    let (surplus, sp_recorded) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let client = reqwest::Client::new();
+    let ask = |session: &str| {
+        let client = client.clone();
+        let router = router.clone();
+        let session = session.to_string();
+        async move {
+            client
+                .post(format!("{router}/v1/chat/completions"))
+                .header("x-ladder-session", session)
+                .json(&serde_json::json!({
+                    "model": "flash",
+                    "messages": [{ "role": "user", "content": "hi" }],
+                }))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    let first = ask("thread-1").await;
+    assert_eq!(first.status(), 200);
+    assert_eq!(first.headers()["x-ladder-rung"], "0");
+    assert_eq!(first.headers()["x-ladder-session"], "thread-1");
+    // Nothing was pinned yet when this one was routed.
+    assert_eq!(first.headers()["x-ladder-pinned"], "false");
+
+    let second = ask("thread-1").await;
+    assert_eq!(second.status(), 200);
+    assert_eq!(second.headers()["x-ladder-rung"], "0");
+    assert_eq!(second.headers()["x-ladder-pinned"], "true");
+
+    assert_eq!(sp_recorded.lock().unwrap().bodies.len(), 2);
+}
+
+#[tokio::test]
+async fn a_pinned_session_is_steered_back_to_its_sub_provider() {
+    let (surplus, _) = mock_surplus(
+        Behavior::Fail(StatusCode::SERVICE_UNAVAILABLE, "down".to_string()),
+        0.10,
+    )
+    .await;
+    let (openrouter, or_recorded) =
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let client = reqwest::Client::new();
+    for _ in 0..2 {
+        let response = client
+            .post(format!("{router}/v1/chat/completions"))
+            .header("x-ladder-session", "thread-2")
+            .json(&serde_json::json!({
+                "model": "flash",
+                "messages": [{ "role": "user", "content": "hi" }],
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    // The first call steers by the rung's configured preference; the second
+    // leads with the sub-provider that actually served, so the cache is warm.
+    assert_eq!(steered_to(&or_recorded, 0).as_deref(), Some("deepinfra"));
+    assert_eq!(steered_to(&or_recorded, 1).as_deref(), Some("DeepInfra"));
+}
+
+#[tokio::test]
+async fn two_sessions_are_pinned_independently() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let client = reqwest::Client::new();
+    for session in ["thread-a", "thread-b"] {
+        for _ in 0..2 {
+            let response = client
+                .post(format!("{router}/v1/chat/completions"))
+                .header("x-ladder-session", session)
+                .json(&serde_json::json!({
+                    "model": "flash",
+                    "messages": [{ "role": "user", "content": "hi" }],
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.headers()["x-ladder-session"], session);
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_request_without_a_session_is_not_pinned() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let response = ask(&router, "flash").await;
+
+    assert_eq!(response.status(), 200);
+    assert!(response.headers().get("x-ladder-session").is_none());
+    assert!(response.headers().get("x-ladder-pinned").is_none());
+}
+
+#[tokio::test]
+async fn the_session_can_come_from_the_bodys_own_identifiers() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let client = reqwest::Client::new();
+
+    // OpenAI's `user`, so an unmodified client still gets sticky routing.
+    let openai = client
+        .post(format!("{router}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "flash",
+            "user": "customer-7",
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(openai.headers()["x-ladder-session"], "customer-7");
+
+    // Anthropic's `metadata.user_id`.
+    let anthropic = client
+        .post(format!("{router}/v1/messages"))
+        .header("anthropic-version", "2023-06-01")
+        .json(&serde_json::json!({
+            "model": "flash",
+            "max_tokens": 16,
+            "metadata": { "user_id": "customer-9" },
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anthropic.headers()["x-ladder-session"], "customer-9");
+}
+
+#[tokio::test]
+async fn a_pin_never_survives_its_rung_being_priced_out() {
+    // Surplus starts affordable at 0.10 against a 0.15 ceiling.
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+
+    // A ceiling below what Surplus quotes: the pin cannot rescue rung 0.
+    let router = start_router(&config_for(&surplus, &openrouter, 0.05)).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{router}/v1/chat/completions"))
+        .header("x-ladder-session", "thread-3")
+        .json(&serde_json::json!({
+            "model": "flash",
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // The budget wins over stickiness, every time.
+    assert_eq!(response.headers()["x-ladder-provider"], "openrouter");
+}
