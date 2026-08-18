@@ -24,6 +24,9 @@ pub struct Config {
     /// provider is considered spent.
     #[serde(default)]
     pub credits: Credits,
+    /// How long a conversation stays pinned to the rung that served it.
+    #[serde(default)]
+    pub sessions: Sessions,
     /// The ladders, in no particular order; requests select one by name.
     pub ladders: Vec<Ladder>,
 }
