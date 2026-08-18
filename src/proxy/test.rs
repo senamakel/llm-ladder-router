@@ -14,11 +14,16 @@ use crate::ladder::SkipReason;
 /// These tests must never reach a real marketplace: the process environment can
 /// hold a working credential, and a test that dispatches would spend real money
 /// and depend on the network. Port 1 refuses connections immediately.
+///
+/// The credential is named after a variable nothing sets, and supplied by
+/// injection below. Reading a real variable would make these tests pass or fail
+/// depending on whether the machine happens to have a key — which is how CI and
+/// a developer's shell come to disagree.
 const OPEN: &str = r#"
 [providers.openrouter]
 kind = "openrouter"
 base_url = "http://127.0.0.1:1"
-api_key_env = "OPENROUTER_API_KEY"
+api_key_env = "LADDER_TEST_UNSET_KEY"
 
 [[ladders]]
 name = "flash"
@@ -30,7 +35,10 @@ name = "flash"
 fn state_with(server: &str) -> State {
     let text = format!("[server]\n{server}\n{OPEN}");
     let config = Config::parse(&text).unwrap();
-    let (_, state) = build(config).unwrap();
+    // Inject the credential so the rung is always reached and always fails at
+    // the closed port, whatever the environment holds.
+    let credentials = BTreeMap::from([("openrouter".to_string(), "test-key".to_string())]);
+    let (_, state) = build_with_credentials(config, &credentials).unwrap();
     state
 }
 
