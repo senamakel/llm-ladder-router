@@ -261,6 +261,18 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
     };
 
     let session = session_of(&state, headers, &body);
+    walk(&state, ladder_config, &name, session, body, wire).await
+}
+
+/// Walks a ladder, dispatching until a rung serves or the rungs run out.
+async fn walk(
+    state: &State,
+    ladder_config: &crate::config::Ladder,
+    name: &str,
+    session: Option<String>,
+    body: serde_json::Value,
+    wire: Wire,
+) -> Response {
     let mut tried: Vec<usize> = Vec::new();
     let mut passed: Vec<Skipped> = Vec::new();
 
