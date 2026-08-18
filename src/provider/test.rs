@@ -209,6 +209,8 @@ fn chosen() -> Chosen {
         min_discount_pct: None,
         prefer: vec!["deepinfra".to_string()],
         reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: None,
     }
 }
 

@@ -107,6 +107,16 @@ pub struct Chosen {
     /// How hard this rung should be asked to think, when the ladder or the rung
     /// declared it and the caller did not.
     pub reasoning_effort: Option<String>,
+    /// What this rung's model is worth relative to a baseline, from
+    /// [`Rung::score_multiplier`][crate::config::Rung::score_multiplier].
+    pub score_multiplier: f64,
+    /// The rung's rank, in USD per million tokens of baseline-equivalent
+    /// quality: the cheapest admitted seller divided by the multiplier. Lowest
+    /// wins.
+    ///
+    /// `None` when the rung has no price data and no ceiling to need any — it
+    /// cannot be ranked, so it is the last resort rather than the best offer.
+    pub score: Option<f64>,
 }
 
 /// The outcome of walking a ladder.

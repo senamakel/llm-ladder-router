@@ -27,6 +27,10 @@ pub const HEADER_CAP: &str = "x-ladder-cap-per-1m";
 /// asked for one. Absent means the request was relayed with whatever depth the
 /// caller sent, which is not the same as the model having thought shallowly.
 pub const HEADER_EFFORT: &str = "x-ladder-reasoning-effort";
+/// Response header carrying the rung's score — its cheapest admitted seller
+/// divided by its quality multiplier, in USD per million baseline-equivalent
+/// tokens. This is the number the rung actually won on.
+pub const HEADER_SCORE: &str = "x-ladder-score";
 /// Response header counting the rungs passed over before this one.
 pub const HEADER_SKIPPED: &str = "x-ladder-skipped";
 /// Response header naming the session this request was attributed to.

@@ -12,7 +12,7 @@ mod types;
 pub use refresh::{refresh_credits_once, refresh_prices_once};
 pub use types::{
     HEADER_CAP, HEADER_EFFORT, HEADER_LADDER, HEADER_MODEL, HEADER_PINNED, HEADER_PROVIDER,
-    HEADER_RUNG, HEADER_SESSION, HEADER_SKIPPED, HEADER_SUB_PROVIDER, State,
+    HEADER_RUNG, HEADER_SCORE, HEADER_SESSION, HEADER_SKIPPED, HEADER_SUB_PROVIDER, State,
 };
 
 use std::collections::BTreeMap;
@@ -316,6 +316,8 @@ async fn walk(
                     model = %chosen.model,
                     cap_per_1m = ?chosen.cap_per_1m,
                     cheapest_per_1m = ?chosen.cheapest_per_1m,
+                    score = ?chosen.score,
+                    score_multiplier = chosen.score_multiplier,
                     min_discount_pct = ?chosen.min_discount_pct,
                     skipped = passed.len(),
                     session = session.as_deref().unwrap_or("-"),
@@ -526,6 +528,9 @@ fn with_routing_headers(
     }
     if let Some(effort) = &chosen.reasoning_effort {
         set(headers, types::HEADER_EFFORT, effort);
+    }
+    if let Some(score) = chosen.score {
+        set(headers, types::HEADER_SCORE, &score.to_string());
     }
     if let Some(session) = session {
         set(headers, types::HEADER_SESSION, session);

@@ -83,8 +83,10 @@ fn funded() -> CreditState {
     credits
 }
 
+/// Ladder order is not precedence: the cheapest affordable rung wins, even when
+/// an earlier rung would also have served.
 #[test]
-fn picks_the_first_rung_whose_sellers_fit() {
+fn picks_the_cheapest_rung_that_fits_rather_than_the_first() {
     let config = config();
     let ladder = config.ladder("reasoning").unwrap();
     let prices = prices(&[
@@ -95,13 +97,121 @@ fn picks_the_first_rung_whose_sellers_fit() {
     let selection = select(&config, ladder, &prices, &funded(), &[]);
     let chosen = selection.chosen.unwrap();
 
-    assert_eq!(chosen.rung, 0);
-    assert_eq!(chosen.model, "deepseek-v4-pro");
-    assert!(selection.skipped.is_empty());
+    assert_eq!(chosen.rung, 1);
+    assert_eq!(chosen.model, "glm-5.2");
+    // With every multiplier at 1.0 the score is just the price.
+    assert_eq!(chosen.score, Some(0.05));
+    // Rung 0 could have served and was outbid, so it is not a skip: only the
+    // two rungs with no price data are.
+    assert_eq!(
+        selection
+            .skipped
+            .iter()
+            .map(|skip| skip.rung)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
 }
 
+/// A multiplier is what lets a dearer rung win: at 2.0, pro is worth paying for
+/// up to twice the price of a baseline rung.
 #[test]
-fn steps_down_when_no_seller_is_under_the_ceiling() {
+fn a_multiplier_lets_a_dearer_rung_outrank_a_cheaper_one() {
+    let config = Config::parse(&CONFIG.replace(
+        r#"  model = "deepseek-v4-pro"
+  max_cost_per_1m = 0.30"#,
+        r#"  model = "deepseek-v4-pro"
+  max_cost_per_1m = 0.30
+  score_multiplier = 2.0"#,
+    ))
+    .unwrap();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    // Pro at 0.10 scores 0.05 against GLM's 0.09, so the dearer model wins.
+    let selection = select(
+        &config,
+        ladder,
+        &prices(&[
+            ("surplus", "deepseek-v4-pro", 0.10),
+            ("surplus", "glm-5.2", 0.09),
+        ]),
+        &funded(),
+        &[],
+    );
+    let chosen = selection.chosen.unwrap();
+    assert_eq!(chosen.model, "deepseek-v4-pro");
+    assert_eq!(chosen.score, Some(0.05));
+    assert!((chosen.score_multiplier - 2.0).abs() < f64::EPSILON);
+
+    // Past twice the price the multiplier no longer covers it, and the same
+    // ladder takes the cheaper model instead. This is the whole policy.
+    let selection = select(
+        &config,
+        ladder,
+        &prices(&[
+            ("surplus", "deepseek-v4-pro", 0.20),
+            ("surplus", "glm-5.2", 0.09),
+        ]),
+        &funded(),
+        &[],
+    );
+    assert_eq!(selection.chosen.unwrap().model, "glm-5.2");
+}
+
+/// Equal scores fall back to ladder order, which is the only remaining thing a
+/// reader can predict.
+#[test]
+fn an_exact_tie_falls_back_to_ladder_order() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+    let selection = select(
+        &config,
+        ladder,
+        &prices(&[
+            ("surplus", "deepseek-v4-pro", 0.07),
+            ("surplus", "glm-5.2", 0.07),
+        ]),
+        &funded(),
+        &[],
+    );
+
+    assert_eq!(selection.chosen.unwrap().rung, 0);
+}
+
+/// An unpriced rung is not a cheap one. It cannot be ranked, so it waits behind
+/// every rung that can be — otherwise a missing price snapshot would read as a
+/// score of zero and win every request.
+#[test]
+fn an_unpriced_rung_ranks_behind_every_priced_one() {
+    let config = Config::parse(&CONFIG.replace(
+        r#"  model = "deepseek-v4-pro"
+  max_cost_per_1m = 0.30"#,
+        r#"  model = "deepseek-v4-pro""#,
+    ))
+    .unwrap();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    // Rung 0 is uncapped and unpriced, so it is admissible but unscored.
+    let selection = select(
+        &config,
+        ladder,
+        &prices(&[("surplus", "glm-5.2", 0.29)]),
+        &funded(),
+        &[],
+    );
+    let chosen = selection.chosen.unwrap();
+    assert_eq!(chosen.model, "glm-5.2");
+
+    // With nothing priced it is the last resort rather than no answer at all.
+    let selection = select(&config, ladder, &prices(&[]), &funded(), &[]);
+    let chosen = selection.chosen.unwrap();
+    assert_eq!(chosen.rung, 0);
+    assert_eq!(chosen.score, None);
+}
+
+/// A rung priced out of its own ceiling is a skip, and says what it cost.
+#[test]
+fn a_rung_over_its_ceiling_is_skipped_with_both_figures() {
     let config = config();
     let ladder = config.ladder("reasoning").unwrap();
     // Pro's cheapest is 0.63 against a 0.30 ceiling; GLM fits.
@@ -113,8 +223,12 @@ fn steps_down_when_no_seller_is_under_the_ceiling() {
     let selection = select(&config, ladder, &prices, &funded(), &[]);
 
     assert_eq!(selection.chosen.unwrap().rung, 1);
-    assert_eq!(selection.skipped.len(), 1);
-    match &selection.skipped[0].reason {
+    let priced_out = selection
+        .skipped
+        .iter()
+        .find(|skip| skip.rung == 0)
+        .expect("rung 0 is skipped");
+    match &priced_out.reason {
         SkipReason::NoSellerUnderCap {
             cap_per_1m,
             cheapest_per_1m,
@@ -127,7 +241,7 @@ fn steps_down_when_no_seller_is_under_the_ceiling() {
 }
 
 #[test]
-fn walks_every_rung_of_a_four_rung_ladder_in_order() {
+fn ranks_every_rung_and_takes_the_only_affordable_one() {
     let config = config();
     let ladder = config.ladder("reasoning").unwrap();
     // Only the last rung fits; the three Surplus rungs are all too expensive.

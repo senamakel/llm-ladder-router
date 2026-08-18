@@ -16,6 +16,8 @@ fn chosen(min_discount_pct: Option<u8>) -> Chosen {
         min_discount_pct,
         prefer: Vec::new(),
         reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: None,
     }
 }
 

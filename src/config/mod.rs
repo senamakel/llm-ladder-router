@@ -51,7 +51,8 @@ impl Config {
     /// - [`Error::Empty`] if there are no ladders, or a ladder has no rungs.
     /// - [`Error::DuplicateLadder`] if two ladders share a name.
     /// - [`Error::UnknownProvider`] if a rung names an undefined provider.
-    /// - [`Error::InvalidPrice`] if a ceiling is not positive and finite.
+    /// - [`Error::InvalidPrice`] if a ceiling or a score multiplier is not
+    ///   positive and finite.
     /// - [`Error::Empty`] if a declared `reasoning_effort` is blank, which would
     ///   otherwise reach an upstream as an empty string and be rejected there.
     fn validate(&self) -> Result<()> {
@@ -97,6 +98,13 @@ impl Config {
                 check_effort(
                     rung.reasoning_effort.as_deref(),
                     &format!("ladder {} rung {index} reasoning_effort", ladder.name),
+                )?;
+                // A multiplier divides a price, so zero, a negative, and `NaN`
+                // are all the same mistake: a rung that would rank ahead of
+                // every honest one and take every request.
+                check_price(
+                    rung.score_multiplier,
+                    &format!("ladder {} rung {index} score_multiplier", ladder.name),
                 )?;
             }
         }

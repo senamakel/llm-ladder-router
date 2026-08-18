@@ -77,6 +77,28 @@ pub enum Error {
         what: String,
     },
 
+    /// A rung on a direct provider carried a price ceiling it can never be
+    /// checked against.
+    #[error(
+        "{field} sets a ceiling on direct provider {provider}, which publishes no order book; \
+         remove the ceiling or move the rung to a marketplace"
+    )]
+    UnpriceableCeiling {
+        /// The configuration field that carried the ceiling.
+        field: String,
+        /// The provider it named.
+        provider: String,
+    },
+
+    /// A provider was asked for a wire format it does not serve.
+    #[error("{provider} does not serve the {wire} API")]
+    UnsupportedWire {
+        /// The provider that was called.
+        provider: String,
+        /// The surface the caller used.
+        wire: String,
+    },
+
     /// A request named a ladder that the configuration does not define.
     #[error("unknown ladder {0}")]
     UnknownLadder(String),

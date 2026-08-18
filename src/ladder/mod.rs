@@ -1,11 +1,18 @@
 //! The selection engine: which rung of a ladder should serve a request.
 //!
 //! This module performs no I/O. It takes the configuration, a price snapshot,
-//! the known balances, and any session pin, and returns the first rung that can
-//! serve along with a reason for every rung it passed over. Keeping it pure is
-//! what makes the routing policy testable without a network, and what lets the
-//! proxy re-run it after an upstream failure by excluding the rungs already
+//! the known balances, and any session pin, and returns the *best* rung that
+//! can serve along with a reason for every rung that could not. Keeping it pure
+//! is what makes the routing policy testable without a network, and what lets
+//! the proxy re-run it after an upstream failure by excluding the rungs already
 //! tried.
+//!
+//! Best means cheapest per unit of quality: each rung's cheapest admitted
+//! seller is divided by its `score_multiplier` and the lowest result wins. A
+//! ladder is therefore a *set* of priced alternatives rather than a queue —
+//! rung order survives only as the tie-break and as documentation. The rungs
+//! still bound what may be paid, one ceiling each, so scoring chooses among
+//! affordable rungs and never widens what "affordable" means.
 
 mod types;
 
@@ -16,7 +23,7 @@ use crate::credits::CreditState;
 use crate::pricing::PriceTable;
 use crate::session::{Pin, PinRejected};
 
-/// Walks a ladder and picks the first rung that can serve the request.
+/// Ranks a ladder's rungs and picks the best one that can serve the request.
 ///
 /// `exclude` holds the positions of rungs already tried and failed during this
 /// request, so a retry after an upstream failure resumes below them rather than
@@ -66,20 +73,18 @@ pub fn select_pinned(
         }
     }
 
+    // Every rung is considered, not just those before the first that fits: the
+    // engine ranks what can serve rather than stopping at it. `skipped` is
+    // therefore every rung that *could not* serve, and a rung absent from both
+    // it and `chosen` is one that could have served and was outbid.
+    let mut candidates: Vec<Chosen> = Vec::new();
     for (index, rung) in ladder.rungs.iter().enumerate() {
         if exclude.contains(&index) {
             continue;
         }
 
         match admit(config, ladder, prices, credits, rung, index) {
-            Ok(chosen) => {
-                return Selection {
-                    skipped,
-                    chosen: Some(chosen),
-                    pin_rejected,
-                    pinned: false,
-                };
-            }
+            Ok(chosen) => candidates.push(chosen),
             Err(reason) => skipped.push(Skipped {
                 rung: index,
                 provider: rung.provider.clone(),
@@ -91,7 +96,7 @@ pub fn select_pinned(
 
     Selection {
         skipped,
-        chosen: None,
+        chosen: candidates.into_iter().min_by(rank),
         pin_rejected,
         pinned: false,
     }
@@ -195,6 +200,10 @@ fn admit(
                 min_discount_pct: None,
                 prefer: rung.prefer.clone(),
                 reasoning_effort: ladder.effort_for(rung),
+                score_multiplier: rung.effective_score_multiplier(),
+                // Nothing to divide: an unpriced rung cannot be ranked against
+                // a priced one, so it waits behind every rung that can be.
+                score: None,
             });
         }
         return Err(SkipReason::NoPriceData);
@@ -215,6 +224,8 @@ fn admit(
         });
     }
 
+    let cheapest_per_1m = admitted.first().map(|offer| offer.price(ladder.cost_basis));
+    let multiplier = rung.effective_score_multiplier();
     Ok(Chosen {
         rung: index,
         provider: rung.provider.clone(),
@@ -224,11 +235,30 @@ fn admit(
             .iter()
             .map(|offer| offer.tag.clone().unwrap_or_else(|| offer.provider.clone()))
             .collect(),
-        cheapest_per_1m: admitted.first().map(|offer| offer.price(ladder.cost_basis)),
+        cheapest_per_1m,
         min_discount_pct: cap.and_then(|cap| model_prices.discount_floor_pct(cap)),
         prefer: rung.prefer.clone(),
         reasoning_effort: ladder.effort_for(rung),
+        score_multiplier: multiplier,
+        score: cheapest_per_1m.map(|price| price / multiplier),
     })
+}
+
+/// Ranks two admissible rungs against each other, best first.
+///
+/// Lowest score wins. A rung with no score is not cheap — it is unpriced, so it
+/// ranks behind every rung that could be measured. Ties fall back to ladder
+/// order, which is the only thing left that a reader can predict.
+fn rank(left: &Chosen, right: &Chosen) -> std::cmp::Ordering {
+    match (left.score, right.score) {
+        (Some(left_score), Some(right_score)) => left_score
+            .partial_cmp(&right_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(left.rung.cmp(&right.rung)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => left.rung.cmp(&right.rung),
+    }
 }
 
 #[cfg(test)]

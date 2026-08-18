@@ -114,6 +114,30 @@ pub enum ProviderKind {
     OpenRouter,
     /// Surplus Intelligence, whose cap is expressed as a minimum discount.
     Surplus,
+    /// Mistral's own API, reached directly rather than through a reseller.
+    ///
+    /// The odd one out, and the reason [`ProviderKind::is_marketplace`] exists:
+    /// there is one seller, so there is no order book to read, no balance to
+    /// poll, and nothing for a price ceiling to bind against. A rung on it is a
+    /// choice of model, not a price. It is here for models no marketplace
+    /// carries — Leanstral being the one that prompted it.
+    Mistral,
+}
+
+impl ProviderKind {
+    /// Whether this provider resells many sub-providers at prices that move.
+    ///
+    /// The whole of the price machinery — order books, ceilings, discounts,
+    /// balance polling — applies to a marketplace and is meaningless against a
+    /// direct endpoint. Asking the question once here keeps every caller from
+    /// growing its own `match`.
+    #[must_use]
+    pub fn is_marketplace(self) -> bool {
+        match self {
+            Self::OpenRouter | Self::Surplus => true,
+            Self::Mistral => false,
+        }
+    }
 }
 
 /// One marketplace the router can dispatch to.
@@ -316,6 +340,21 @@ pub struct Rung {
     /// Sub-providers to prefer when the marketplace supports steering.
     #[serde(default)]
     pub prefer: Vec<String>,
+    /// What this rung's model is worth, as a multiple of a baseline model's
+    /// price.
+    ///
+    /// The engine ranks rungs by `price / score_multiplier` and takes the
+    /// lowest, so this is the answer to "how many times the cheap model's price
+    /// is this one still worth paying". A rung at `2.0` wins over a baseline
+    /// rung whenever it is under twice the price, and loses when it is not.
+    ///
+    /// It is a property of the rung rather than of the model on purpose: the
+    /// same model is worth more on a ladder built for depth than on one built
+    /// for throughput, and that difference is exactly what a ladder is for.
+    ///
+    /// Unset means `1.0`, so a ladder that never mentions it ranks purely on
+    /// price.
+    pub score_multiplier: Option<f64>,
     /// How hard this rung's model should think, overriding the ladder's default.
     ///
     /// Spelled per rung because the accepted values are a property of the model
@@ -327,6 +366,13 @@ pub struct Rung {
 }
 
 impl Rung {
+    /// What this rung's model is worth relative to a baseline, defaulting to
+    /// `1.0` for a rung that does not say.
+    #[must_use]
+    pub fn effective_score_multiplier(&self) -> f64 {
+        self.score_multiplier.unwrap_or(1.0)
+    }
+
     /// The effort that actually applies to this rung, the rung's own overriding
     /// the ladder's default.
     ///
