@@ -197,6 +197,61 @@ impl Default for Credits {
     }
 }
 
+/// Sticky-routing policy for conversations.
+///
+/// Prompt caches are warm only where the prefix was already seen, so keeping a
+/// thread on one rung and one sub-provider is usually worth more than the small
+/// price differences between rungs the budget already allows.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sessions {
+    /// Whether to pin conversations at all.
+    #[serde(default = "Sessions::default_enabled")]
+    pub enabled: bool,
+    /// How long an idle session keeps its pin. Every request refreshes it, so
+    /// this expires abandoned conversations rather than active ones.
+    #[serde(default = "Sessions::default_ttl", with = "humantime_serde")]
+    pub ttl: Duration,
+    /// The most sessions to remember at once, oldest evicted first.
+    ///
+    /// Sessions are named by callers and never explicitly closed, so without a
+    /// bound this would grow for the life of the process.
+    #[serde(default = "Sessions::default_max_entries")]
+    pub max_entries: usize,
+    /// The request header carrying the session or thread identifier.
+    #[serde(default = "Sessions::default_header")]
+    pub header: String,
+}
+
+impl Sessions {
+    fn default_enabled() -> bool {
+        true
+    }
+
+    fn default_ttl() -> Duration {
+        Duration::from_secs(30 * 60)
+    }
+
+    fn default_max_entries() -> usize {
+        10_000
+    }
+
+    fn default_header() -> String {
+        "x-ladder-session".to_string()
+    }
+}
+
+impl Default for Sessions {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            ttl: Self::default_ttl(),
+            max_entries: Self::default_max_entries(),
+            header: Self::default_header(),
+        }
+    }
+}
+
 /// Which token price a rung's ceiling applies to.
 ///
 /// Output tokens dominate the bill for most workloads, so that is the default.
