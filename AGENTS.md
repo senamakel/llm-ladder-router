@@ -61,13 +61,27 @@ Keep public exports centralized in `src/lib.rs` so downstream users have one
 predictable surface. Put shared error variants in `src/error/mod.rs` and return
 the crate-wide `Result<T>` from fallible public APIs.
 
-### Never let a test reach a real marketplace
+### Never let a test reach a real marketplace, or read a real credential
 
 The process environment can hold working marketplace credentials, so a test that
 dispatches to a real base URL spends real money and depends on the network. Point
 every dispatching test at a loopback mock or a closed port (`http://127.0.0.1:1`).
 The selection engine takes prices and balances as arguments precisely so the
 routing policy can be tested without any of this.
+
+Equally, never let a test's configuration name a real credential variable such as
+`OPENROUTER_API_KEY`. Whether that variable happens to be set changes whether a
+rung is skipped as missing-credential or tried and failed — so the test passes on
+a developer's machine and fails in CI, or the reverse. Name a variable nothing
+sets and supply the value through `build_with_credentials` /
+`serve_with_credentials` / `Client::with_credential`, which exist for this and
+for deployments whose secrets come from a secret manager.
+
+Before pushing, sanity-check against a bare environment:
+
+```sh
+env -u OPENROUTER_API_KEY -u SURPLUS_API_KEY cargo test --all-features
+```
 
 ## Build And Test
 
