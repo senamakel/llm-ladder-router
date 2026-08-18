@@ -323,28 +323,11 @@ async fn walk(
                     "rung served"
                 );
 
-                // Pin to what actually served, including the sub-provider the
-                // marketplace chose, so the next turn of this conversation
-                // lands on the warm cache.
-                if let Some(session) = &session {
-                    let sub_provider = sub_provider_of(&response);
-                    state.sessions.write().await.pin(
-                        session.clone(),
-                        Pin {
-                            ladder: name.to_string(),
-                            rung: chosen.rung,
-                            provider: chosen.provider.clone(),
-                            model: chosen.model.clone(),
-                            sub_provider,
-                            cap_per_1m: chosen.cap_per_1m,
-                            pinned_at: std::time::Instant::now(),
-                        },
-                    );
-                }
+                remember(state, session.as_deref(), name, &chosen, &response).await;
 
                 return with_routing_headers(
                     response,
-                    &name,
+                    name,
                     &chosen,
                     passed.len(),
                     session.as_deref(),
@@ -371,7 +354,7 @@ async fn walk(
             Attempt::CallerError(response) => {
                 return with_routing_headers(
                     response,
-                    &name,
+                    name,
                     &chosen,
                     passed.len(),
                     session.as_deref(),
@@ -449,6 +432,34 @@ async fn dispatch(
                 .collect::<String>()
         )),
     }
+}
+
+/// Pins a conversation to the rung and sub-provider that just served it.
+///
+/// Recording the sub-provider is the point: the marketplace picked it, and it
+/// is the one holding the warm prompt cache for this thread.
+async fn remember(
+    state: &State,
+    session: Option<&str>,
+    ladder: &str,
+    chosen: &Chosen,
+    response: &Response,
+) {
+    let Some(session) = session else {
+        return;
+    };
+    state.sessions.write().await.pin(
+        session,
+        Pin {
+            ladder: ladder.to_string(),
+            rung: chosen.rung,
+            provider: chosen.provider.clone(),
+            model: chosen.model.clone(),
+            sub_provider: sub_provider_of(response),
+            cap_per_1m: chosen.cap_per_1m,
+            pinned_at: std::time::Instant::now(),
+        },
+    );
 }
 
 /// The conversation this request belongs to, if any.
