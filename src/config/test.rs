@@ -361,6 +361,10 @@ fn the_shipped_example_config_is_valid() {
         .unwrap();
     let config = Config::parse(&text).unwrap();
 
+    // Every interface, not loopback: the example is what the container image
+    // ships, and a container that binds loopback answers nobody.
+    assert_eq!(config.server.bind, "0.0.0.0:6969");
+
     // The example is the documentation for the two ladders the router ships
     // with; a change to either should be deliberate.
     assert_eq!(
