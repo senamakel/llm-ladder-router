@@ -323,7 +323,8 @@ async fn walk(
                     "rung served"
                 );
 
-                remember(state, session.as_deref(), name, &chosen, &response).await;
+                let served_by = sub_provider_of(&response);
+                remember(state, session.as_deref(), name, &chosen, served_by).await;
 
                 return with_routing_headers(
                     response,
@@ -438,12 +439,15 @@ async fn dispatch(
 ///
 /// Recording the sub-provider is the point: the marketplace picked it, and it
 /// is the one holding the warm prompt cache for this thread.
+/// `sub_provider` is read from the response before this is called: a `Response`
+/// body is not `Sync`, so holding a reference to one across the lock would make
+/// the whole request future non-`Send` and unspawnable.
 async fn remember(
     state: &State,
     session: Option<&str>,
     ladder: &str,
     chosen: &Chosen,
-    response: &Response,
+    sub_provider: Option<String>,
 ) {
     let Some(session) = session else {
         return;
@@ -455,7 +459,7 @@ async fn remember(
             rung: chosen.rung,
             provider: chosen.provider.clone(),
             model: chosen.model.clone(),
-            sub_provider: sub_provider_of(response),
+            sub_provider,
             cap_per_1m: chosen.cap_per_1m,
             pinned_at: std::time::Instant::now(),
         },
