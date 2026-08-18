@@ -399,3 +399,73 @@ fn the_shipped_example_config_is_valid() {
         ]
     );
 }
+
+/// A ladder-level effort reaches every rung, and a rung's own overrides it.
+///
+/// Both halves matter: without the default a max-reasoning ladder would have to
+/// repeat itself on every rung, and without the override it could not say
+/// `xhigh` on the one model family that accepts it.
+#[test]
+fn reasoning_effort_defaults_down_the_ladder_and_a_rung_overrides_it() {
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "max-reasoning"
+        reasoning_effort = "high"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "gpt-5.6-luna"
+          reasoning_effort = "xhigh"
+        "#,
+    )
+    .unwrap();
+
+    let ladder = config.ladder("max-reasoning").unwrap();
+    assert_eq!(ladder.effort_for(&ladder.rungs[0]).as_deref(), Some("high"));
+    assert_eq!(ladder.effort_for(&ladder.rungs[1]).as_deref(), Some("xhigh"));
+}
+
+/// A ladder that declares nothing asks for nothing, so every ladder written
+/// before this field behaves exactly as it did.
+#[test]
+fn a_ladder_without_an_effort_asks_for_none() {
+    let config = Config::parse(EXAMPLE).unwrap();
+    let flash = config.ladder("flash").unwrap();
+    assert!(flash.effort_for(&flash.rungs[0]).is_none());
+}
+
+/// A blank effort is a configuration mistake, not "unset": relayed as an empty
+/// string it is a 400 the failover loop attributes to the caller, so the ladder
+/// would stop rather than step down.
+#[test]
+fn a_blank_reasoning_effort_is_rejected() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "max-reasoning"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+          reasoning_effort = "  "
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(&error, Error::Empty { what } if what.contains("reasoning_effort")),
+        "unexpected error: {error}"
+    );
+}

@@ -10,7 +10,7 @@ pub mod openrouter;
 pub mod surplus;
 mod types;
 
-pub use types::{Dispatched, Disposition, Wire, classify_status};
+pub use types::{Dispatched, Disposition, Wire, apply_reasoning_effort, classify_status};
 
 use crate::config::{Provider, ProviderKind};
 use crate::error::{Error, Result};
@@ -131,6 +131,10 @@ impl Client {
         body: &serde_json::Value,
     ) -> Result<Dispatched> {
         let mut body = body.clone();
+        // Depth first, then the marketplace's own rewrites: both appliers only
+        // add fields, and doing it here rather than inside each dialect keeps
+        // the rule one rule.
+        types::apply_reasoning_effort(&mut body, chosen, wire);
         let path = match self.provider.kind {
             ProviderKind::OpenRouter => {
                 openrouter::apply_routing(&mut body, chosen);

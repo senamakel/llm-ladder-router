@@ -104,6 +104,9 @@ pub struct Chosen {
     pub min_discount_pct: Option<u8>,
     /// Sub-providers the rung asked to prefer.
     pub prefer: Vec<String>,
+    /// How hard this rung should be asked to think, when the ladder or the rung
+    /// declared it and the caller did not.
+    pub reasoning_effort: Option<String>,
 }
 
 /// The outcome of walking a ladder.

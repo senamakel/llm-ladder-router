@@ -52,6 +52,8 @@ impl Config {
     /// - [`Error::DuplicateLadder`] if two ladders share a name.
     /// - [`Error::UnknownProvider`] if a rung names an undefined provider.
     /// - [`Error::InvalidPrice`] if a ceiling is not positive and finite.
+    /// - [`Error::Empty`] if a declared `reasoning_effort` is blank, which would
+    ///   otherwise reach an upstream as an empty string and be rejected there.
     fn validate(&self) -> Result<()> {
         if self.ladders.is_empty() {
             return Err(Error::Empty {
@@ -76,6 +78,10 @@ impl Config {
                     what: format!("ladder {} rungs", ladder.name),
                 });
             }
+            check_effort(
+                ladder.reasoning_effort.as_deref(),
+                &format!("ladder {} reasoning_effort", ladder.name),
+            )?;
             for (index, rung) in ladder.rungs.iter().enumerate() {
                 if !self.providers.contains_key(&rung.provider) {
                     return Err(Error::UnknownProvider {
@@ -87,6 +93,10 @@ impl Config {
                 check_price(
                     rung.max_cost_per_1m,
                     &format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+                )?;
+                check_effort(
+                    rung.reasoning_effort.as_deref(),
+                    &format!("ladder {} rung {index} reasoning_effort", ladder.name),
                 )?;
             }
         }
@@ -123,6 +133,22 @@ fn check_price(price: Option<f64>, field: &str) -> Result<()> {
     match price {
         Some(value) if !value.is_finite() || value <= 0.0 => Err(Error::InvalidPrice {
             field: field.to_string(),
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// Rejects a declared reasoning effort that is blank.
+///
+/// A blank value is not "unset": it would be injected into the request body as
+/// an empty string, and an upstream rejects that with a 400 the failover loop
+/// attributes to the caller — so the ladder would stop rather than step down.
+/// Which values are *meaningful* is the model's business and cannot be checked
+/// here; that a value was declared at all is this file's.
+fn check_effort(effort: Option<&str>, field: &str) -> Result<()> {
+    match effort {
+        Some(value) if value.trim().is_empty() => Err(Error::Empty {
+            what: field.to_string(),
         }),
         _ => Ok(()),
     }

@@ -194,6 +194,7 @@ fn admit(
                 cheapest_per_1m: None,
                 min_discount_pct: None,
                 prefer: rung.prefer.clone(),
+                reasoning_effort: ladder.effort_for(rung),
             });
         }
         return Err(SkipReason::NoPriceData);
@@ -226,6 +227,7 @@ fn admit(
         cheapest_per_1m: admitted.first().map(|offer| offer.price(ladder.cost_basis)),
         min_discount_pct: cap.and_then(|cap| model_prices.discount_floor_pct(cap)),
         prefer: rung.prefer.clone(),
+        reasoning_effort: ladder.effort_for(rung),
     })
 }
 

@@ -23,6 +23,10 @@ pub const HEADER_MODEL: &str = "x-ladder-model";
 pub const HEADER_SUB_PROVIDER: &str = "x-ladder-sub-provider";
 /// Response header carrying the ceiling that applied, in USD per Mtok.
 pub const HEADER_CAP: &str = "x-ladder-cap-per-1m";
+/// Response header naming the reasoning depth the router asked for, when it
+/// asked for one. Absent means the request was relayed with whatever depth the
+/// caller sent, which is not the same as the model having thought shallowly.
+pub const HEADER_EFFORT: &str = "x-ladder-reasoning-effort";
 /// Response header counting the rungs passed over before this one.
 pub const HEADER_SKIPPED: &str = "x-ladder-skipped";
 /// Response header naming the session this request was attributed to.

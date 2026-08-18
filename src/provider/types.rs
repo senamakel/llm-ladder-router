@@ -1,5 +1,7 @@
 //! Types shared by both marketplace dialects.
 
+use crate::ladder::Chosen;
+
 /// Which request/response format a caller is speaking.
 ///
 /// Both marketplaces serve both formats natively, so the router relays rather
@@ -42,6 +44,34 @@ pub enum Disposition {
     Advance,
     /// The caller's request is at fault; return the response unchanged.
     CallerError,
+}
+
+/// Applies a chosen rung's reasoning depth to an outgoing request body.
+///
+/// Three rules, and each one is a failure it prevents:
+///
+/// - **The caller always wins.** A body that already carries `reasoning_effort`
+///   or `reasoning` is left alone, so a request asking for a shallow answer is
+///   not silently made expensive by the ladder it happened to select.
+/// - **Only on the `OpenAI` surface.** Anthropic spells this as a `thinking`
+///   block with a token budget, and inventing one from an effort word would be
+///   the router translating between dialects rather than relaying.
+/// - **Nothing is inserted when no effort was declared**, so every ladder that
+///   predates this field behaves exactly as it did.
+pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wire: Wire) {
+    if wire != Wire::OpenAi {
+        return;
+    }
+    let Some(effort) = chosen.reasoning_effort.as_ref() else {
+        return;
+    };
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if object.contains_key("reasoning_effort") || object.contains_key("reasoning") {
+        return;
+    }
+    object.insert("reasoning_effort".to_string(), effort.clone().into());
 }
 
 /// Classifies an upstream response body by the marketplace-independent rules.

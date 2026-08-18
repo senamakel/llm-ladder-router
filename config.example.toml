@@ -128,3 +128,45 @@ cost_basis = "completion"
   model = "deepseek/deepseek-v4-flash"
   max_cost_per_1m = 0.30
   prefer = ["deepinfra"]
+
+# The deepest ladder: for the handful of roles whose whole output is a
+# judgement nothing mechanical can check, where thinking longer is the only
+# thing that improves the answer.
+#
+# Two things separate it from `reasoning`. It asks for depth explicitly —
+# `reasoning_effort` is injected into every request that did not already carry
+# one — and it pays more for it: the ceilings sit above the reasoning ladder's
+# because a role that runs a few times an hour cannot spend what a role driving
+# every turn spends. It never steps below a reasoning model; a ladder whose last
+# rung is a fast model would silently answer a max-reasoning request with the
+# cheapest thing available, which is the failure this ladder exists to avoid.
+#
+# The effort word is per rung on purpose: the accepted values are a property of
+# the model family, and a rejected value is a 400 the failover loop hands back
+# to the caller rather than stepping past.
+[[ladders]]
+name = "max-reasoning"
+cost_basis = "completion"
+reasoning_effort = "high"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
+  max_cost_per_1m = 1.00
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "glm-5.2"
+  max_cost_per_1m = 1.00
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "gpt-5.6-luna"
+  # The one rung whose model family takes a setting above `high`.
+  reasoning_effort = "xhigh"
+  max_cost_per_1m = 0.60
+
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-pro"
+  max_cost_per_1m = 1.00

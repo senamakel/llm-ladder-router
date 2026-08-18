@@ -11,8 +11,8 @@ mod types;
 
 pub use refresh::{refresh_credits_once, refresh_prices_once};
 pub use types::{
-    HEADER_CAP, HEADER_LADDER, HEADER_MODEL, HEADER_PINNED, HEADER_PROVIDER, HEADER_RUNG,
-    HEADER_SESSION, HEADER_SKIPPED, HEADER_SUB_PROVIDER, State,
+    HEADER_CAP, HEADER_EFFORT, HEADER_LADDER, HEADER_MODEL, HEADER_PINNED, HEADER_PROVIDER,
+    HEADER_RUNG, HEADER_SESSION, HEADER_SKIPPED, HEADER_SUB_PROVIDER, State,
 };
 
 use std::collections::BTreeMap;
@@ -523,6 +523,9 @@ fn with_routing_headers(
     set(headers, types::HEADER_SKIPPED, &skipped.to_string());
     if let Some(cap) = chosen.cap_per_1m {
         set(headers, types::HEADER_CAP, &cap.to_string());
+    }
+    if let Some(effort) = &chosen.reasoning_effort {
+        set(headers, types::HEADER_EFFORT, effort);
     }
     if let Some(session) = session {
         set(headers, types::HEADER_SESSION, session);

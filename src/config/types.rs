@@ -276,8 +276,29 @@ pub struct Ladder {
     /// Which price the rung ceilings apply to.
     #[serde(default)]
     pub cost_basis: CostBasis,
+    /// How hard every rung of this ladder should think, when the caller did not
+    /// say.
+    ///
+    /// This is what makes a ladder a *reasoning depth* rather than only a price
+    /// band: a caller selects `max-reasoning` and gets the deepest setting each
+    /// rung's model supports, without having to know which model served. A rung
+    /// overrides it with [`Rung::reasoning_effort`], which is the point — the
+    /// accepted values differ by model family, so the one place that knows
+    /// which model is about to serve is the rung naming it.
+    ///
+    /// A caller that sets `reasoning_effort` (or `reasoning`) itself always
+    /// wins; see [`Rung::effective_reasoning_effort`].
+    pub reasoning_effort: Option<String>,
     /// The rungs, tried first to last.
     pub rungs: Vec<Rung>,
+}
+
+impl Ladder {
+    /// The effort that applies to one of this ladder's rungs.
+    #[must_use]
+    pub fn effort_for(&self, rung: &Rung) -> Option<String> {
+        rung.effective_reasoning_effort(self.reasoning_effort.as_deref())
+    }
 }
 
 /// One (provider, model, ceiling) step of a ladder.
@@ -295,9 +316,30 @@ pub struct Rung {
     /// Sub-providers to prefer when the marketplace supports steering.
     #[serde(default)]
     pub prefer: Vec<String>,
+    /// How hard this rung's model should think, overriding the ladder's default.
+    ///
+    /// Spelled per rung because the accepted values are a property of the model
+    /// family, not of the ladder: `xhigh` is understood by some reasoning
+    /// models and rejected by others, and a rejected value is a 400 the caller
+    /// owns — which the failover loop returns rather than stepping past. So the
+    /// rung that names the model names the value that model accepts.
+    pub reasoning_effort: Option<String>,
 }
 
 impl Rung {
+    /// The effort that actually applies to this rung, the rung's own overriding
+    /// the ladder's default.
+    ///
+    /// `None` means neither was set and the request is relayed with whatever
+    /// the caller sent, which is the behaviour every ladder had before this
+    /// field existed.
+    #[must_use]
+    pub fn effective_reasoning_effort(&self, ladder_default: Option<&str>) -> Option<String> {
+        self.reasoning_effort
+            .clone()
+            .or_else(|| ladder_default.map(str::to_string))
+    }
+
     /// The ceiling that actually applies to this rung, in USD per million
     /// tokens.
     ///
