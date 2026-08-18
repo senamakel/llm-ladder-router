@@ -47,6 +47,37 @@ curl localhost:6969/v1/chat/completions \
 It keys its pidfile to the config path, so a second config on a second port runs
 alongside the first. Point it elsewhere with `LADDER_CONFIG=other.toml`.
 
+## Docker
+
+Images are published to GitHub Packages on every push to `main` and every
+`v*` tag.
+
+```sh
+docker run --rm -p 6969:6969 \
+  --env-file .env \
+  -v "$PWD/config.toml:/etc/ladder/config.toml:ro" \
+  ghcr.io/senamakel/llm-ladder-router:latest
+```
+
+The image ships `config.example.toml` as its default configuration, so it runs
+with no volume at all — mount your own over `/etc/ladder/config.toml` to change
+the ladders or the caller key. Marketplace credentials come from the
+environment, as they do everywhere else.
+
+Two things to know before exposing it:
+
+- It binds `0.0.0.0`, because loopback inside a container is reachable by
+  nothing. That means **the caller key is what stands between the router and
+  anyone who can reach the port** — set `server.api_key`, or point
+  `server.api_key_env` at `LADDER_API_KEY` and pass that in.
+- The router loads every rung's order book before it binds, so a fresh
+  container is deliberately not healthy for the first few seconds. The
+  `HEALTHCHECK` allows for it with a start period; give orchestrator probes the
+  same slack.
+
+It runs as an unprivileged fixed uid (10001), and needs no CA bundle — TLS
+roots are compiled in.
+
 ## Endpoints
 
 | Path | Surface |
