@@ -527,3 +527,260 @@ fn an_uncapped_rung_whose_sellers_are_all_down_is_skipped() {
         other => panic!("expected NoSellerUnderCap, got {other:?}"),
     }
 }
+
+// --- Session pinning -------------------------------------------------------
+
+use crate::session::{Pin, PinRejected};
+
+fn a_pin(rung: usize, cap: Option<f64>, sub_provider: Option<&str>) -> Pin {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+    let rung_config = &ladder.rungs[rung];
+    Pin {
+        ladder: "reasoning".to_string(),
+        rung,
+        provider: rung_config.provider.clone(),
+        model: rung_config.model.clone(),
+        sub_provider: sub_provider.map(str::to_string),
+        cap_per_1m: cap,
+        pinned_at: std::time::Instant::now(),
+    }
+}
+
+/// Prices where every rung of the reasoning ladder fits comfortably.
+fn all_affordable() -> PriceTable {
+    prices(&[
+        ("surplus", "deepseek-v4-pro", 0.05),
+        ("surplus", "glm-5.2", 0.05),
+        ("surplus", "deepseek-v4-flash", 0.05),
+        ("openrouter", "deepseek/deepseek-v4-flash", 0.05),
+    ])
+}
+
+#[test]
+fn a_pinned_session_stays_on_its_rung_even_when_a_better_one_is_free() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    // Rung 0 is affordable, so an unpinned request would take it.
+    let unpinned = select(&config, ladder, &all_affordable(), &funded(), &[]);
+    assert_eq!(unpinned.chosen.unwrap().rung, 0);
+
+    // Pinned to rung 2, the conversation stays there: a hop would cost its
+    // whole history at uncached rates.
+    let pin = a_pin(2, Some(0.15), None);
+    let selection = select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &funded(),
+        &[],
+        Some(&pin),
+    );
+
+    let chosen = selection.chosen.unwrap();
+    assert_eq!(chosen.rung, 2);
+    assert!(selection.pinned);
+    assert_eq!(selection.pin_rejected, None);
+    // Rungs above the pin are not "skipped" — they were never considered.
+    assert!(selection.skipped.is_empty());
+}
+
+#[test]
+fn a_pin_steers_back_to_the_sub_provider_holding_the_cache() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let mut table = PriceTable::new();
+    table.insert(
+        "surplus",
+        "deepseek-v4-pro",
+        ModelPrices::new(vec![offer("cheap", 0.05), offer("warm", 0.10)]),
+    );
+
+    let pin = a_pin(0, Some(0.30), Some("warm"));
+    let chosen = select_pinned(&config, ladder, &table, &funded(), &[], Some(&pin))
+        .chosen
+        .unwrap();
+
+    // "cheap" is cheaper, but "warm" already holds the prefix, so it leads.
+    assert_eq!(chosen.prefer.first().map(String::as_str), Some("warm"));
+}
+
+#[test]
+fn a_pin_never_admits_a_sub_provider_the_ceiling_rules_out() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let mut table = PriceTable::new();
+    table.insert(
+        "surplus",
+        "deepseek-v4-pro",
+        // "warm" is now above the 0.30 ceiling.
+        ModelPrices::new(vec![offer("cheap", 0.05), offer("warm", 0.90)]),
+    );
+
+    let pin = a_pin(0, Some(0.30), Some("warm"));
+    let chosen = select_pinned(&config, ladder, &table, &funded(), &[], Some(&pin))
+        .chosen
+        .unwrap();
+
+    // A warm cache is not a reason to exceed the budget.
+    assert!(!chosen.prefer.iter().any(|prefer| prefer == "warm"));
+    assert_eq!(chosen.admitted, vec!["cheap"]);
+}
+
+#[test]
+fn a_pin_is_dropped_when_its_rung_is_priced_out() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    // Rung 0 no longer fits; rung 1 does.
+    let table = prices(&[
+        ("surplus", "deepseek-v4-pro", 9.0),
+        ("surplus", "glm-5.2", 0.05),
+    ]);
+
+    let pin = a_pin(0, Some(0.30), None);
+    let selection = select_pinned(&config, ladder, &table, &funded(), &[], Some(&pin));
+
+    assert_eq!(selection.pin_rejected, Some(PinRejected::RungUnavailable));
+    assert!(!selection.pinned);
+    assert_eq!(selection.chosen.unwrap().rung, 1);
+}
+
+#[test]
+fn a_pin_is_dropped_when_the_ceiling_changed() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    // The pin was taken under a 0.90 ceiling; the config now says 0.30.
+    let pin = a_pin(0, Some(0.90), None);
+    let selection = select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &funded(),
+        &[],
+        Some(&pin),
+    );
+
+    // A changed ceiling is a changed policy, and the pin must not outlive it.
+    assert_eq!(selection.pin_rejected, Some(PinRejected::CeilingChanged));
+    assert_eq!(selection.chosen.unwrap().rung, 0);
+}
+
+#[test]
+fn a_pin_from_another_ladder_is_ignored() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let mut pin = a_pin(0, Some(0.30), None);
+    pin.ladder = "flash".to_string();
+
+    let selection = select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &funded(),
+        &[],
+        Some(&pin),
+    );
+
+    // A different ladder is a request for a different capability.
+    assert_eq!(selection.pin_rejected, Some(PinRejected::DifferentLadder));
+}
+
+#[test]
+fn a_pin_past_the_end_of_a_shortened_ladder_is_ignored() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let mut pin = a_pin(0, Some(0.30), None);
+    pin.rung = 99;
+
+    let selection = select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &funded(),
+        &[],
+        Some(&pin),
+    );
+    assert_eq!(selection.pin_rejected, Some(PinRejected::RungGone));
+}
+
+#[test]
+fn a_pin_whose_rung_now_names_a_different_model_is_ignored() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    // The ladder was reordered under the pin's feet.
+    let mut pin = a_pin(0, Some(0.30), None);
+    pin.model = "some-other-model".to_string();
+
+    let selection = select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &funded(),
+        &[],
+        Some(&pin),
+    );
+    assert_eq!(selection.pin_rejected, Some(PinRejected::RungGone));
+}
+
+#[test]
+fn a_pinned_rung_that_already_failed_this_request_falls_through_quietly() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let pin = a_pin(0, Some(0.30), None);
+    // Rung 0 was tried and failed upstream a moment ago.
+    let selection = select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &funded(),
+        &[0],
+        Some(&pin),
+    );
+
+    // The pin is still justified; it just cannot be used for this attempt, so
+    // it is not reported as rejected.
+    assert_eq!(selection.pin_rejected, None);
+    assert_eq!(selection.chosen.unwrap().rung, 1);
+}
+
+#[test]
+fn a_pin_is_dropped_when_its_providers_balance_is_spent() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let mut credits = CreditState::new();
+    credits.set_balance("surplus", 0.01);
+    credits.set_balance("openrouter", 50.0);
+
+    let pin = a_pin(0, Some(0.30), None);
+    let selection = select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &credits,
+        &[],
+        Some(&pin),
+    );
+
+    assert_eq!(selection.pin_rejected, Some(PinRejected::RungUnavailable));
+    assert_eq!(selection.chosen.unwrap().provider, "openrouter");
+}
+
+#[test]
+fn selecting_without_a_pin_is_never_reported_as_pinned() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let selection = select(&config, ladder, &all_affordable(), &funded(), &[]);
+    assert!(!selection.pinned);
+    assert_eq!(selection.pin_rejected, None);
+}
