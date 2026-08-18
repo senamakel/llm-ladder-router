@@ -51,11 +51,13 @@ pub mod error;
 pub mod ladder;
 pub mod pricing;
 pub mod provider;
+pub mod session;
 pub mod proxy;
 
-pub use config::{Config, CostBasis, Ladder, Provider, ProviderKind, Rung};
+pub use config::{Config, CostBasis, Ladder, Provider, ProviderKind, Rung, Sessions};
 pub use credits::CreditState;
 pub use error::{Error, Result};
-pub use ladder::{Chosen, Selection, SkipReason, Skipped, select};
+pub use ladder::{Chosen, Selection, SkipReason, Skipped, select, select_pinned};
 pub use pricing::{ModelPrices, Offer, PriceTable};
+pub use session::{Pin, PinRejected, SessionPins};
 pub use proxy::serve;

@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::credits::CreditState;
 use crate::pricing::PriceTable;
 use crate::provider::Client;
+use crate::session::SessionPins;
 
 /// Response header naming the ladder a request used.
 pub const HEADER_LADDER: &str = "x-ladder-name";
@@ -24,6 +25,10 @@ pub const HEADER_SUB_PROVIDER: &str = "x-ladder-sub-provider";
 pub const HEADER_CAP: &str = "x-ladder-cap-per-1m";
 /// Response header counting the rungs passed over before this one.
 pub const HEADER_SKIPPED: &str = "x-ladder-skipped";
+/// Response header naming the session this request was attributed to.
+pub const HEADER_SESSION: &str = "x-ladder-session";
+/// Response header saying whether the session's pin decided the rung.
+pub const HEADER_PINNED: &str = "x-ladder-pinned";
 
 /// Everything a request handler needs, shared across connections.
 #[derive(Debug, Clone)]
@@ -36,4 +41,6 @@ pub struct State {
     pub prices: Arc<RwLock<PriceTable>>,
     /// The latest balances, replaced wholesale by the poller.
     pub credits: Arc<RwLock<CreditState>>,
+    /// Which rung each live conversation is pinned to.
+    pub sessions: Arc<RwLock<SessionPins>>,
 }

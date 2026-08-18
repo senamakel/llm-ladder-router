@@ -8,7 +8,7 @@
 mod types;
 
 pub use types::{
-    Config, CostBasis, Credits, Ladder, Pricing, Provider, ProviderKind, Rung, Server,
+    Config, CostBasis, Credits, Ladder, Pricing, Provider, ProviderKind, Rung, Server, Sessions,
 };
 
 use crate::error::{Error, Result};
