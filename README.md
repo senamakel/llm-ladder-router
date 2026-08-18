@@ -98,6 +98,39 @@ price data is missing or stale. A rung that *is* tried and fails upstream
 advances the ladder; a request the caller got wrong is returned as-is rather
 than replayed and charged again at every rung.
 
+## Session pinning
+
+Marketplaces bill cached prompt tokens at a fraction of the normal rate, but a
+cache is warm only on the sub-provider that already saw the prefix. A long
+thread that hops between rungs pays full price for its whole history on every
+hop, which for a growing conversation soon costs more than the cheaper rung ever
+saved.
+
+So once a conversation has been served it is pinned to the rung *and*
+sub-provider that served it, and stays there while that choice still fits the
+budget. The pin is dropped the moment it stops being justified — a changed
+ceiling, a rung the market can no longer satisfy, a spent balance, or a switch to
+another ladder. **A pin never overrides a ceiling**; it only breaks the tie
+between rungs the budget already allows.
+
+Identify a conversation with the `x-ladder-session` header, or let the router use
+what your client already sends: OpenAI's `user` field or Anthropic's
+`metadata.user_id`. Responses carry `x-ladder-session` and `x-ladder-pinned`, and
+a dropped pin is logged with the reason.
+
+```toml
+[sessions]
+enabled = true
+ttl = "30m"            # idle timeout; every request refreshes the pin
+max_entries = 10000
+header = "x-ladder-session"
+```
+
+One subtlety worth knowing: a marketplace names the sub-provider that served in
+one vocabulary and accepts steering in another — `OpenRouter` reports
+`DigitalOcean` but routes on `digitalocean`, and a quantized endpoint answers to
+`deepinfra/fp8`. The router resolves one to the other, so a pin actually lands.
+
 ## Marketplaces
 
 Both are supported, and their differences are real rather than cosmetic.
