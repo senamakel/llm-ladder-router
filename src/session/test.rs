@@ -120,9 +120,15 @@ fn a_pin_remembers_the_sub_provider_holding_the_warm_cache() {
 #[test]
 fn every_rejection_reason_reads_as_a_sentence() {
     for (reason, expected) in [
-        (PinRejected::DifferentLadder, "session moved to a different ladder"),
+        (
+            PinRejected::DifferentLadder,
+            "session moved to a different ladder",
+        ),
         (PinRejected::CeilingChanged, "the rung's ceiling changed"),
-        (PinRejected::RungUnavailable, "the pinned rung can no longer serve"),
+        (
+            PinRejected::RungUnavailable,
+            "the pinned rung can no longer serve",
+        ),
         (PinRejected::RungGone, "the pinned rung no longer exists"),
     ] {
         assert_eq!(reason.to_string(), expected);

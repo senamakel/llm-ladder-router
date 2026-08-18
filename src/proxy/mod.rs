@@ -273,14 +273,7 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
             let credits = state.credits.read().await;
             let sessions = state.sessions.read().await;
             let pin = session.as_deref().and_then(|session| sessions.get(session));
-            ladder::select_pinned(
-                &state.config,
-                ladder_config,
-                &prices,
-                &credits,
-                &tried,
-                pin,
-            )
+            ladder::select_pinned(&state.config, ladder_config, &prices, &credits, &tried, pin)
         };
 
         if let Some(reason) = &selection.pin_rejected {
@@ -506,7 +499,11 @@ fn with_routing_headers(
     }
     if let Some(session) = session {
         set(headers, types::HEADER_SESSION, session);
-        set(headers, types::HEADER_PINNED, if pinned { "true" } else { "false" });
+        set(
+            headers,
+            types::HEADER_PINNED,
+            if pinned { "true" } else { "false" },
+        );
     }
     response
 }

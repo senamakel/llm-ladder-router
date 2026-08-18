@@ -127,8 +127,8 @@ fn honor(
         return Ok(None);
     }
 
-    let mut chosen =
-        admit(config, ladder, prices, credits, rung, pin.rung).map_err(|_| PinRejected::RungUnavailable)?;
+    let mut chosen = admit(config, ladder, prices, credits, rung, pin.rung)
+        .map_err(|_| PinRejected::RungUnavailable)?;
 
     // Steer back to the sub-provider holding the warm cache, but only if the
     // ceiling still admits it — otherwise the pin would smuggle in a seller the

@@ -23,6 +23,20 @@ refresh = "15m"
 # stale is skipped rather than admitted on a guess.
 stale_after = "1h"
 
+# Prompt caches are warm only where the prefix was already seen, so a
+# conversation is pinned to the rung and sub-provider that served it and stays
+# there while that choice still fits the budget. A changed ceiling or a rung the
+# market can no longer satisfy drops the pin; it never overrides a ceiling.
+[sessions]
+enabled = true
+# Idle timeout. Every request refreshes the pin, so this expires abandoned
+# conversations rather than active ones.
+ttl = "30m"
+max_entries = 10000
+# Callers can also identify a thread with OpenAI's `user` field or Anthropic's
+# `metadata.user_id`, so an unmodified client still gets sticky routing.
+header = "x-ladder-session"
+
 [credits]
 refresh = "5m"
 # A provider with less than this much spendable balance is skipped entirely.
