@@ -92,6 +92,27 @@ impl ModelPrices {
         admitted
     }
 
+    /// The slug that steers traffic to a named sub-provider, if it is still
+    /// admitted under `cap`.
+    ///
+    /// A marketplace names the sub-provider that served in one vocabulary and
+    /// accepts steering in another — `OpenRouter` reports "DigitalOcean" but
+    /// routes on "digitalocean", and a quantized endpoint answers to
+    /// "deepinfra/fp8". Matching case- and space-insensitively against both the
+    /// display name and the slug is what lets a session return to the
+    /// sub-provider holding its warm cache.
+    #[must_use]
+    pub fn steering_slug(&self, name: &str, cap: Option<f64>, basis: CostBasis) -> Option<String> {
+        let wanted = fold(name);
+        self.admitted(cap, basis)
+            .into_iter()
+            .find(|offer| {
+                offer.tag.as_deref().is_some_and(|tag| fold(tag) == wanted)
+                    || fold(&offer.provider) == wanted
+            })
+            .map(|offer| offer.tag.clone().unwrap_or_else(|| offer.provider.clone()))
+    }
+
     /// The cheapest usable offer, whatever it costs.
     ///
     /// Used to explain a rung that was skipped: knowing the floor was $0.63
