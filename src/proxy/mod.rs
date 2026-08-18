@@ -337,8 +337,14 @@ async fn walk(
                 );
             }
             Attempt::Advance { detail, kind } => {
-                if let Failure::RateLimited(retry_after) = kind {
-                    park(state, name, &chosen, retry_after).await;
+                match kind {
+                    Failure::RateLimited(retry_after) => {
+                        park(state, name, &chosen, retry_after, "rate limited").await;
+                    }
+                    Failure::Refused => {
+                        park(state, name, &chosen, None, "refused this router").await;
+                    }
+                    Failure::Broke => {}
                 }
                 tracing::warn!(
                     ladder = %name,
@@ -417,6 +423,7 @@ async fn park(
     ladder: &str,
     chosen: &Chosen,
     retry_after: Option<std::time::Duration>,
+    why: &str,
 ) {
     let cooled = state.config.rate_limits.cooldown_for(retry_after);
     state
@@ -431,7 +438,8 @@ async fn park(
         model = %chosen.model,
         cooldown_secs = cooled.duration.as_secs(),
         upstream_asked = cooled.requested,
-        "rung rate limited, cooling down"
+        why,
+        "rung parked, cooling down"
     );
 }
 
@@ -439,12 +447,22 @@ async fn park(
 ///
 /// The distinction decides whether the rung is parked: a 500 or a timeout says
 /// the upstream broke, which the next request has every reason to re-test,
-/// while a 429 says it is deliberately refusing for a while.
+/// while a 429 or a 403 says it is deliberately refusing and will keep saying
+/// so until something changes at its end.
 #[derive(Debug, Clone, Copy)]
 enum Failure {
     /// Rate limited, carrying the backoff the upstream asked for if it named
     /// one.
     RateLimited(Option<std::time::Duration>),
+    /// Refusing to authenticate this router — 401, 403 or 407.
+    ///
+    /// Parked on the same argument as a rate limit, and it is the same waste:
+    /// a marketplace whose edge is refusing does so for minutes, and without a
+    /// cooldown every request in that window pays a failed round trip to
+    /// rediscover it. The measured case was a fifteen-minute Surplus outage.
+    /// Nothing is asked of the upstream here — a refusal carries no
+    /// `Retry-After` — so the configured default applies.
+    Refused,
     /// Anything else the upstream owns.
     Broke,
 }
@@ -516,10 +534,12 @@ async fn dispatch(
                     .take(200)
                     .collect::<String>()
             ),
-            kind: if dispatched.status == StatusCode::TOO_MANY_REQUESTS {
-                Failure::RateLimited(dispatched.retry_after)
-            } else {
-                Failure::Broke
+            kind: match dispatched.status {
+                StatusCode::TOO_MANY_REQUESTS => Failure::RateLimited(dispatched.retry_after),
+                StatusCode::UNAUTHORIZED
+                | StatusCode::FORBIDDEN
+                | StatusCode::PROXY_AUTHENTICATION_REQUIRED => Failure::Refused,
+                _ => Failure::Broke,
             },
         },
     }

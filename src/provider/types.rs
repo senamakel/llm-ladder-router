@@ -95,13 +95,46 @@ pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wir
 ///
 /// Marketplace-specific codes are handled by each provider module before this
 /// is consulted.
+///
+/// The question this answers is *whose fault was it*, and the answer decides
+/// whether the ladder steps down or hands the status back. Two families
+/// advance:
+///
+/// - **The upstream broke**: any 5xx, plus a 408, plus a 429 it chose to send.
+/// - **The upstream refused *us***: 401, 403 and 407. These read as caller
+///   errors and are not, because there are two authentications in play and
+///   they are not the same one. The caller authenticates to this router; the
+///   router authenticates to the marketplace with a credential the caller has
+///   never seen and cannot fix. So a 401 or 403 from upstream means "this
+///   provider will not serve this router", which is the definition of a rung
+///   that cannot serve — exactly what the next rung exists for.
+///
+/// That distinction was learned from an outage rather than reasoned out.
+/// Surplus spent about fifteen minutes answering `403 Forbidden` as an HTML
+/// page from its own edge. Every ladder passed it straight back, five long
+/// agent runs died inside the same minute, and the rungs on a second provider
+/// sitting directly below were never tried.
+///
+/// What deliberately does **not** advance is the rest of 4xx — 400, 404, 413,
+/// 422 and their neighbours. Those are statements about the request, and the
+/// request is the same at every rung, so walking the ladder would produce the
+/// identical refusal N times and report the last one. A provider module may
+/// still override a specific code it knows to mean something else, which is
+/// what `openrouter::classify` does with a 404 that is really a price ceiling.
 #[must_use]
 pub fn classify_status(status: reqwest::StatusCode) -> Disposition {
     if status.is_success() {
         return Disposition::Served;
     }
-    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+    if status.is_server_error() {
         return Disposition::Advance;
     }
-    Disposition::CallerError
+    match status {
+        reqwest::StatusCode::TOO_MANY_REQUESTS
+        | reqwest::StatusCode::REQUEST_TIMEOUT
+        | reqwest::StatusCode::UNAUTHORIZED
+        | reqwest::StatusCode::FORBIDDEN
+        | reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED => Disposition::Advance,
+        _ => Disposition::CallerError,
+    }
 }

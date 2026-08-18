@@ -103,12 +103,43 @@ fn statuses_are_classified_by_who_is_at_fault() {
         classify_status(reqwest::StatusCode::TOO_MANY_REQUESTS),
         Disposition::Advance
     );
+    // The router holds the marketplace credential, not the caller, so an
+    // upstream refusing to authenticate us is a rung that cannot serve rather
+    // than a request that cannot be made. A live Surplus outage answered 403
+    // to every ladder and killed five runs that had a second provider one rung
+    // below.
     assert_eq!(
         classify_status(reqwest::StatusCode::UNAUTHORIZED),
+        Disposition::Advance
+    );
+    assert_eq!(
+        classify_status(reqwest::StatusCode::FORBIDDEN),
+        Disposition::Advance
+    );
+    assert_eq!(
+        classify_status(reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED),
+        Disposition::Advance
+    );
+    assert_eq!(
+        classify_status(reqwest::StatusCode::REQUEST_TIMEOUT),
+        Disposition::Advance
+    );
+    // The rest of 4xx describes the request, which every rung would refuse
+    // identically, so walking the ladder would only report the last refusal.
+    assert_eq!(
+        classify_status(reqwest::StatusCode::UNPROCESSABLE_ENTITY),
         Disposition::CallerError
     );
     assert_eq!(
-        classify_status(reqwest::StatusCode::UNPROCESSABLE_ENTITY),
+        classify_status(reqwest::StatusCode::BAD_REQUEST),
+        Disposition::CallerError
+    );
+    assert_eq!(
+        classify_status(reqwest::StatusCode::NOT_FOUND),
+        Disposition::CallerError
+    );
+    assert_eq!(
+        classify_status(reqwest::StatusCode::PAYLOAD_TOO_LARGE),
         Disposition::CallerError
     );
 }
