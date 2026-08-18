@@ -142,6 +142,8 @@ fn a_routing_decision_is_stamped_onto_the_response() {
         "reasoning",
         &chosen,
         2,
+        Some("thread-1"),
+        true,
     );
     let headers = response.headers();
 
@@ -171,6 +173,8 @@ fn an_uncapped_rung_carries_no_ceiling_header() {
         "flash",
         &chosen,
         0,
+        None,
+        false,
     );
     assert!(response.headers().get(HEADER_CAP).is_none());
 }

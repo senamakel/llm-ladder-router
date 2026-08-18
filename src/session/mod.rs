@@ -17,7 +17,7 @@ mod types;
 pub use types::{Pin, PinRejected};
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Every live session pin, oldest evicted first.
 #[derive(Debug)]
