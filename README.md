@@ -199,12 +199,27 @@ The shipped `max-reasoning` ladder is the intended use: higher ceilings than
 fast model would answer a max-reasoning request with the cheapest thing
 available, which is the failure it exists to avoid.
 
-## Rate limits
+## When an upstream refuses
 
-A 429 is the upstream refusing for a while, not failing. It advances the ladder
-like any other upstream failure — and, unlike any other, it is remembered: the
-rung is parked and skipped until the limit lifts, so a throttled provider costs
-one wasted round trip rather than one per request.
+Two things a provider does are refusals rather than failures, and both advance
+the ladder *and* park the rung — so a provider that is refusing costs one
+wasted round trip rather than one per request.
+
+**A 429** is the upstream refusing for a while. It carries its own backoff.
+
+**A 401, 403 or 407** is the upstream refusing this router outright. That reads
+like a caller error and is not, because two authentications are in play and
+they are not the same one: the caller authenticates to this router, and the
+router authenticates to the marketplace with a credential the caller has never
+seen and cannot fix. So it means "this provider will not serve this router",
+which is exactly what the next rung is for.
+
+That rule was learned rather than reasoned out. Surplus spent about fifteen
+minutes answering `403 Forbidden` as an HTML page from its own edge; every
+ladder passed it straight back, and five long agent runs died inside the same
+minute with a working second provider sitting one rung below. **A ladder whose
+rungs all name one provider has no failover, whatever its length** — the
+shipped config now ends every ladder on a second provider for that reason.
 
 ```toml
 [rate_limits]
@@ -214,10 +229,12 @@ max_cooldown = "5m"     # the longest Retry-After that will be honoured
 
 The upstream's own `Retry-After` wins when it sends one, clamped to
 `max_cooldown` — a header asking for an hour would otherwise empty a ladder on
-one busy minute. A cooldown is per **rung**, not per provider: one model being
-throttled says nothing about another on the same marketplace. And only a 429
-parks a rung. A 500 or a timeout says the upstream broke, which the next request
-has every reason to re-test.
+one busy minute. A refusal carries no `Retry-After`, so `cooldown` applies. A
+cooldown is per **rung**, not per provider: one model being throttled says
+nothing about another on the same marketplace, and taking a whole marketplace
+out on one model's answer would empty a ladder. A 500 or a timeout parks
+nothing — that says the upstream broke, which the next request has every reason
+to re-test.
 
 A parked rung is skipped exactly as a priced-out one is, and says so in the 502
 body: `rate limited, retry in 12s`.

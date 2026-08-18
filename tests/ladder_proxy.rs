@@ -413,6 +413,55 @@ async fn a_caller_error_is_returned_without_being_replayed() {
     );
 }
 
+/// The outage this was written for: Surplus answered `403 Forbidden` from its
+/// own edge for about fifteen minutes, every ladder handed it straight back,
+/// and five long agent runs died inside the same minute with a working second
+/// provider sitting one rung below.
+#[tokio::test]
+async fn a_provider_refusing_this_router_advances_the_ladder() {
+    let (surplus, sp_recorded) = mock_surplus(
+        Behavior::Fail(StatusCode::FORBIDDEN, "Forbidden".to_string()),
+        0.10,
+    )
+    .await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let response = ask(&router, "flash").await;
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-ladder-provider"], "openrouter");
+    // Two authentications are in play and they are not the same one: the
+    // caller authenticated to this router, and the credential the marketplace
+    // rejected is the router's own. So this is a rung that cannot serve, not a
+    // request that cannot be made.
+    assert_eq!(sp_recorded.lock().unwrap().bodies.len(), 1);
+}
+
+#[tokio::test]
+async fn a_refused_rung_is_parked_so_the_next_request_skips_it() {
+    let (surplus, sp_recorded) = mock_surplus(
+        Behavior::Fail(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+        0.10,
+    )
+    .await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    for _ in 0..3 {
+        assert_eq!(ask(&router, "flash").await.status(), 200);
+    }
+
+    // A marketplace whose edge is refusing does so for minutes. Without the
+    // cooldown every request in that window pays a failed round trip to
+    // rediscover it, which is the same waste a 429 is parked for.
+    assert_eq!(
+        sp_recorded.lock().unwrap().bodies.len(),
+        1,
+        "a refused rung must be tried once, then skipped while it cools down"
+    );
+}
+
 #[tokio::test]
 async fn a_surplus_ceiling_travels_as_a_discount_prefix_in_the_path() {
     let (surplus, sp_recorded) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;

@@ -100,7 +100,16 @@ guarantee about what the request will cost — only `/min{N}/` is.
 Advance to the next rung on these; everything else is a caller error and is
 returned unchanged rather than replayed at another provider's expense.
 
-| Provider | Signal |
+Marketplace-independent, in `provider::types::classify_status`: any 5xx, 408,
+429, and **401 / 403 / 407**. The last three are refusals of *this router's*
+credential, which the caller has never seen and cannot fix, so they name a rung
+that cannot serve rather than a request that cannot be made — measured, when a
+Surplus edge 403 was handed back to five callers that each had a working second
+provider one rung below. The rest of 4xx describes the request, which is
+identical at every rung, so walking the ladder would only report the last
+refusal.
+
+| Provider | Additional signal |
 | --- | --- |
-| OpenRouter | 404 no-endpoints-satisfy-max-price; 429; 5xx; 400 `Provider returned error` |
-| Surplus | 404 `minimum_discount_not_met`; 404 `no_sellers_for_model`; 402 payment required; 503 all sellers unhealthy |
+| OpenRouter | 404 no-endpoints-satisfy-max-price; 400 `Provider returned error` |
+| Surplus | 404 `minimum_discount_not_met`; 404 `no_sellers_for_model`; 402 payment required |
