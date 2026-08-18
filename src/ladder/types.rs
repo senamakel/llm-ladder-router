@@ -113,4 +113,9 @@ pub struct Selection {
     pub skipped: Vec<Skipped>,
     /// The rung to try, or `None` when every rung was passed over.
     pub chosen: Option<Chosen>,
+    /// Why the session's pin was not honored, when it had one and it was not.
+    pub pin_rejected: Option<crate::session::PinRejected>,
+    /// Whether the chosen rung came from the session's pin rather than from
+    /// walking the ladder.
+    pub pinned: bool,
 }
