@@ -260,6 +260,7 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
         );
     };
 
+    let session = session_of(&state, headers, &body);
     let mut tried: Vec<usize> = Vec::new();
     let mut passed: Vec<Skipped> = Vec::new();
 
@@ -270,10 +271,29 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
         let selection = {
             let prices = state.prices.read().await;
             let credits = state.credits.read().await;
-            ladder::select(&state.config, ladder_config, &prices, &credits, &tried)
+            let sessions = state.sessions.read().await;
+            let pin = session.as_deref().and_then(|session| sessions.get(session));
+            ladder::select_pinned(
+                &state.config,
+                ladder_config,
+                &prices,
+                &credits,
+                &tried,
+                pin,
+            )
         };
 
+        if let Some(reason) = &selection.pin_rejected {
+            tracing::info!(
+                ladder = %name,
+                session = session.as_deref().unwrap_or("-"),
+                reason = %reason,
+                "session pin dropped"
+            );
+        }
+
         passed.extend(selection.skipped);
+        let pinned = selection.pinned;
         let Some(chosen) = selection.chosen else {
             break;
         };
@@ -293,9 +313,38 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
                     cheapest_per_1m = ?chosen.cheapest_per_1m,
                     min_discount_pct = ?chosen.min_discount_pct,
                     skipped = passed.len(),
+                    session = session.as_deref().unwrap_or("-"),
+                    pinned,
                     "rung served"
                 );
-                return with_routing_headers(response, &name, &chosen, passed.len());
+
+                // Pin to what actually served, including the sub-provider the
+                // marketplace chose, so the next turn of this conversation
+                // lands on the warm cache.
+                if let Some(session) = &session {
+                    let sub_provider = sub_provider_of(&response);
+                    state.sessions.write().await.pin(
+                        session.clone(),
+                        Pin {
+                            ladder: name.clone(),
+                            rung: chosen.rung,
+                            provider: chosen.provider.clone(),
+                            model: chosen.model.clone(),
+                            sub_provider,
+                            cap_per_1m: chosen.cap_per_1m,
+                            pinned_at: std::time::Instant::now(),
+                        },
+                    );
+                }
+
+                return with_routing_headers(
+                    response,
+                    &name,
+                    &chosen,
+                    passed.len(),
+                    session.as_deref(),
+                    pinned,
+                );
             }
             Attempt::Advance(detail) => {
                 tracing::warn!(
@@ -315,7 +364,14 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
                 tried.push(chosen.rung);
             }
             Attempt::CallerError(response) => {
-                return with_routing_headers(response, &name, &chosen, passed.len());
+                return with_routing_headers(
+                    response,
+                    &name,
+                    &chosen,
+                    passed.len(),
+                    session.as_deref(),
+                    pinned,
+                );
             }
         }
     }
