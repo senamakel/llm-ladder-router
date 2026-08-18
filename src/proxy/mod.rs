@@ -11,8 +11,8 @@ mod types;
 
 pub use refresh::{refresh_credits_once, refresh_prices_once};
 pub use types::{
-    HEADER_CAP, HEADER_LADDER, HEADER_MODEL, HEADER_PROVIDER, HEADER_RUNG, HEADER_SKIPPED,
-    HEADER_SUB_PROVIDER, State,
+    HEADER_CAP, HEADER_LADDER, HEADER_MODEL, HEADER_PINNED, HEADER_PROVIDER, HEADER_RUNG,
+    HEADER_SESSION, HEADER_SKIPPED, HEADER_SUB_PROVIDER, State,
 };
 
 use std::collections::BTreeMap;
@@ -30,6 +30,7 @@ use crate::error::{Error, Result};
 use crate::ladder::{self, Chosen, Skipped};
 use crate::pricing::PriceTable;
 use crate::provider::{Client, Disposition, Wire};
+use crate::session::{Pin, SessionPins};
 
 /// Builds the router's HTTP application and shared state.
 ///
@@ -79,11 +80,16 @@ pub fn build_with_credentials(
         })
         .collect();
 
+    let config_sessions = config.sessions.clone();
     let state = State {
         config: Arc::new(config),
         clients: Arc::new(clients),
         prices: Arc::new(RwLock::new(PriceTable::new())),
         credits: Arc::new(RwLock::new(CreditState::new())),
+        sessions: Arc::new(RwLock::new(SessionPins::new(
+            config_sessions.ttl,
+            config_sessions.max_entries,
+        ))),
     };
 
     let app = axum::Router::new()
