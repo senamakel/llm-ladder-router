@@ -1,17 +1,25 @@
 //! Budget-aware routing across LLM marketplace tiers.
 //!
-//! A *ladder* is an ordered list of rungs. Each rung names a marketplace, a
-//! model, and the most it may pay per million tokens. The router walks the
-//! ladder and dispatches to the first rung whose sellers fit under that
-//! ceiling, falling through to the next rung when none do — so a request takes
-//! the strongest model the budget allows rather than failing or overpaying.
+//! A *ladder* is a set of rungs. Each rung names a marketplace, a model, the
+//! most it may pay per million tokens, and what that model is worth — its
+//! `score_multiplier`. The router prices every rung, divides each one's
+//! cheapest admitted seller by its multiplier, and dispatches to the lowest
+//! result — so a request takes the best value the budget allows rather than
+//! failing, overpaying, or taking a weak model because it was listed first.
+//! Rung order is documentation and the tie-break, not precedence.
 //!
 //! Ceilings come from configuration and combine: a provider-wide ceiling bounds
 //! every rung that uses it, and a rung may tighten it further. The tighter of
-//! the two applies.
+//! the two applies. Scoring chooses among affordable rungs and never widens
+//! what affordable means.
+//!
+//! A rung that answers 429 is parked for a cooldown and skipped until it lifts,
+//! so a throttled provider costs one wasted round trip rather than one per
+//! request. See [`cooldown`].
 //!
 //! Two marketplaces are supported, and their differences are real rather than
-//! cosmetic. `OpenRouter` publishes a per-sub-provider price list and enforces a
+//! cosmetic. A third kind of provider is direct — one seller, no order book —
+//! for models no marketplace carries; see [`provider::mistral`]. `OpenRouter` publishes a per-sub-provider price list and enforces a
 //! price ceiling directly. Surplus Intelligence publishes a full order book but
 //! ignores its documented price-cap parameters, so a ceiling is restated as the
 //! equivalent minimum discount, which it does enforce. See
@@ -55,7 +63,8 @@ pub mod provider;
 pub mod proxy;
 pub mod session;
 
-pub use config::{Config, CostBasis, Ladder, Provider, ProviderKind, Rung, Sessions};
+pub use config::{Config, CostBasis, Ladder, Provider, ProviderKind, RateLimits, Rung, Sessions};
+pub use cooldown::{Cooldowns, Cooled};
 pub use credits::CreditState;
 pub use error::{Error, Result};
 pub use ladder::{Chosen, Selection, SkipReason, Skipped, select, select_pinned};

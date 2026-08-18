@@ -828,3 +828,52 @@ async fn a_pin_never_survives_its_rung_being_priced_out() {
     // The budget wins over stickiness, every time.
     assert_eq!(response.headers()["x-ladder-provider"], "openrouter");
 }
+
+/// A 429 advances the ladder like any other upstream failure — and, unlike any
+/// other, is remembered: the next request does not spend a round trip finding
+/// out the same thing.
+#[tokio::test]
+async fn a_rate_limited_rung_is_not_asked_again_while_it_cools() {
+    let (surplus, sp_recorded) = mock_surplus(
+        Behavior::Fail(StatusCode::TOO_MANY_REQUESTS, "rate limited".to_string()),
+        0.10,
+    )
+    .await;
+    let (openrouter, or_recorded) =
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let first = ask(&router, "flash").await;
+    assert_eq!(first.status(), 200);
+    assert_eq!(first.headers()["x-ladder-provider"], "openrouter");
+
+    let second = ask(&router, "flash").await;
+    assert_eq!(second.status(), 200);
+    assert_eq!(second.headers()["x-ladder-provider"], "openrouter");
+
+    // Asked once, then parked: the second request went straight past it.
+    assert_eq!(sp_recorded.lock().unwrap().bodies.len(), 1);
+    assert_eq!(or_recorded.lock().unwrap().bodies.len(), 2);
+}
+
+/// A rung that broke is not a rung that refused. A 503 is re-tested on the next
+/// request, because an upstream having a bad second is not the same as one
+/// deliberately throttling for a minute.
+#[tokio::test]
+async fn a_broken_rung_is_tried_again_on_the_next_request() {
+    let (surplus, sp_recorded) = mock_surplus(
+        Behavior::Fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "all sellers unhealthy".to_string(),
+        ),
+        0.10,
+    )
+    .await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    ask(&router, "flash").await;
+    ask(&router, "flash").await;
+
+    assert_eq!(sp_recorded.lock().unwrap().bodies.len(), 2);
+}

@@ -55,7 +55,7 @@ fn funded() -> CreditState {
 }
 
 #[test]
-fn a_ladder_prefers_its_first_affordable_rung() {
+fn a_ladder_takes_the_only_rung_it_can_price() {
     let config = Config::parse(CONFIG).unwrap();
     let ladder = config.ladder("flash").unwrap();
 
@@ -74,7 +74,7 @@ fn a_ladder_prefers_its_first_affordable_rung() {
 }
 
 #[test]
-fn a_ladder_falls_through_to_the_backstop_when_the_cheap_rung_is_priced_out() {
+fn a_priced_out_rung_leaves_the_backstop_to_serve() {
     let config = Config::parse(CONFIG).unwrap();
     let ladder = config.ladder("flash").unwrap();
 
@@ -161,4 +161,63 @@ fn an_invalid_configuration_is_rejected_with_a_specific_error() {
     )
     .unwrap_err();
     assert!(matches!(error, Error::UnknownProvider { .. }));
+}
+
+/// The value rule, exercised the way a consumer would: a multiplier is what
+/// lets a dearer rung win, and it stops mattering past the premium it names.
+#[test]
+fn a_multiplier_decides_between_two_affordable_rungs() {
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+          max_cost_per_1m = 0.50
+          score_multiplier = 2.0
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+          max_cost_per_1m = 0.50
+        "#,
+    )
+    .unwrap();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let chosen = select(&config, ladder, &priced(0.18, 0.10), &funded(), &[])
+        .chosen
+        .unwrap();
+    assert_eq!(chosen.model, "deepseek-v4-pro", "0.09 beats 0.10");
+
+    let chosen = select(&config, ladder, &priced(0.22, 0.10), &funded(), &[])
+        .chosen
+        .unwrap();
+    assert_eq!(chosen.model, "deepseek-v4-flash", "0.11 loses to 0.10");
+}
+
+fn priced(pro: f64, flash: f64) -> PriceTable {
+    let mut table = PriceTable::new();
+    for (model, price) in [("deepseek-v4-pro", pro), ("deepseek-v4-flash", flash)] {
+        table.insert(
+            "surplus",
+            model,
+            ModelPrices::new(vec![Offer {
+                provider: "seller".to_string(),
+                tag: None,
+                prompt_per_1m: price / 2.0,
+                completion_per_1m: price,
+                direct_completion_per_1m: Some(3.74),
+                usable: true,
+            }]),
+        );
+    }
+    table
 }

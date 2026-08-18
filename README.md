@@ -3,31 +3,38 @@
 Budget-aware routing across LLM marketplace tiers, behind an OpenAI- and
 Anthropic-compatible proxy.
 
-A **ladder** is an ordered list of **rungs**. Each rung names a marketplace, a
-model, and the most it may pay per million tokens. The router walks the ladder
-and dispatches to the first rung whose sellers fit under that ceiling, stepping
-down when none do — so a request gets the strongest model the budget allows
-instead of failing or quietly overpaying.
+A **ladder** is a set of **rungs**. Each rung names a marketplace, a model, the
+most it may pay per million tokens, and what that model is *worth* — its
+`score_multiplier`. The router prices every rung against the live order books,
+divides each one's cheapest admitted seller by its multiplier, and dispatches to
+the lowest result — so a request gets the best value the budget allows instead
+of failing, quietly overpaying, or taking a weak model because it happened to be
+listed first.
 
 ```
 POST /v1/chat/completions {"model": "reasoning", ...}
 
-  rung 0  surplus     deepseek-v4-pro    ≤ $0.30/Mtok   cheapest seller $0.63  → skip
-  rung 1  surplus     glm-5.2            ≤ $0.30/Mtok   cheapest seller $0.01  → serve
-  rung 2  surplus     gpt-5.6-luna       ≤ $0.30/Mtok
-  rung 3  surplus     deepseek-v4-flash  ≤ $0.15/Mtok
-  rung 4  openrouter  deepseek-v4-flash  ≤ $0.30/Mtok
+  rung  provider    model              ceiling   cheapest   ×mult   score
+  0     surplus     deepseek-v4-pro    ≤ 0.30       0.63       —       —   priced out
+  1     surplus     glm-5.2            ≤ 0.30       0.09     1.8    0.050  ← serves
+  2     surplus     gpt-5.6-luna       ≤ 0.30       0.07     1.2    0.058
+  3     surplus     deepseek-v4-flash  ≤ 0.15       0.06     1.0    0.060
+  4     openrouter  deepseek-v4-flash  ≤ 0.30       0.14     1.0    0.140
 
-  x-ladder-rung: 1   x-ladder-provider: surplus   x-ladder-cap-per-1m: 0.3
+  x-ladder-rung: 1   x-ladder-provider: surplus   x-ladder-score: 0.05
 ```
 
-Three ladders ship in `config.example.toml`:
+Ladder order is not precedence. It is documentation, and the tie-break when two
+rungs score the same.
 
-| Ladder | Rungs, in order | Ceilings | Depth |
-| --- | --- | --- | --- |
-| `flash` | surplus `gpt-5.6-luna` → surplus `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 / 0.15 / 0.30 | — |
-| `reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 | — |
-| `max-reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 | `high` / `high` / `xhigh` / `high` |
+Four ladders ship in `config.example.toml`:
+
+| Ladder | Rungs | Ceilings | Multipliers | Depth |
+| --- | --- | --- | --- | --- |
+| `flash` | surplus `gpt-5.6-luna`, surplus `deepseek-v4-flash`, openrouter `deepseek/deepseek-v4-flash` | 0.30 / 0.15 / 0.30 | 1.2 / 1.0 / 1.0 | — |
+| `reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, `deepseek-v4-flash`, openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 | 2.0 / 1.8 / 1.2 / 1.0 / 1.0 | — |
+| `max-reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 | 8.0 / 6.0 / 1.5 / 8.0 | `high` / `high` / `xhigh` / `high` |
+| `scribe` | mistral `labs-leanstral-1-5` | — | — | — |
 
 `max-reasoning` is the odd one and deliberately so: it pays roughly three times
 what `reasoning` pays, and it asks for depth — `reasoning_effort = "high"` on
@@ -101,8 +108,8 @@ translated** — an Anthropic request reaches an Anthropic endpoint unchanged an
 its response comes back unchanged. Parameters this router does not model pass
 through untouched.
 
-The `model` field names the **ladder** (`flash`, `reasoning`, `max-reasoning`),
-not a model.
+The `model` field names the **ladder** (`flash`, `reasoning`, `max-reasoning`,
+`scribe`), not a model.
 
 Authenticate with `Authorization: Bearer <key>` or `x-api-key: <key>`; both work
 on both surfaces. The key is `server.api_key` in `config.toml`, or
@@ -111,9 +118,27 @@ accepts every caller, which is only appropriate on a loopback bind.
 
 Every response says how it was routed: `x-ladder-name`, `x-ladder-rung`,
 `x-ladder-provider`, `x-ladder-model`, `x-ladder-sub-provider`,
-`x-ladder-cap-per-1m`, `x-ladder-skipped`, and `x-ladder-reasoning-effort` when
-the ladder asked for a reasoning depth. When no rung can serve, the 502 body
+`x-ladder-cap-per-1m`, `x-ladder-score`, `x-ladder-skipped`, and
+`x-ladder-reasoning-effort` when the ladder asked for a reasoning depth. When no rung can serve, the 502 body
 lists each rung and why it was passed over.
+
+## Scoring
+
+`score = cheapest admitted seller ÷ score_multiplier`, and the lowest score
+serves. The multiplier answers one question — *how many times the baseline
+model's price is this one still worth paying* — so `1.0` is the baseline, a rung
+at `2.0` wins while it stays under twice the baseline's price, and a rung that
+says nothing is a baseline rung.
+
+The same model carries a different multiplier on different ladders, and that is
+the point: what depth is worth is a property of the job, not of the model.
+`flash` keeps its multipliers within a factor of two, because on that ladder any
+rung will do and price should decide; `max-reasoning` puts eight times between
+its strongest and weakest rung, because a cheap seller on a weak model is not
+what that ladder is for.
+
+A rung with no price data and no ceiling is *unpriced*, not free: it cannot be
+ranked, so it serves only when nothing that can be ranked is available.
 
 ## Ceilings
 
@@ -135,10 +160,11 @@ max_cost_per_1m = 0.50      # nothing on this marketplace exceeds this
 default, since output dominates most bills), `prompt`, or `blended`.
 
 A rung is skipped without spending a round trip when its sellers are all above
-the ceiling, its provider's balance is spent, its credential is missing, or its
-price data is missing or stale. A rung that *is* tried and fails upstream
-advances the ladder; a request the caller got wrong is returned as-is rather
-than replayed and charged again at every rung.
+the ceiling, its provider's balance is spent, its credential is missing, its
+price data is missing or stale, or it is cooling down after a rate limit. A rung
+that *is* tried and fails upstream drops out and the next-best rung takes the
+request; a request the caller got wrong is returned as-is rather than replayed
+and charged again at every rung.
 
 ## Reasoning depth
 
@@ -173,6 +199,29 @@ The shipped `max-reasoning` ladder is the intended use: higher ceilings than
 fast model would answer a max-reasoning request with the cheapest thing
 available, which is the failure it exists to avoid.
 
+## Rate limits
+
+A 429 is the upstream refusing for a while, not failing. It advances the ladder
+like any other upstream failure — and, unlike any other, it is remembered: the
+rung is parked and skipped until the limit lifts, so a throttled provider costs
+one wasted round trip rather than one per request.
+
+```toml
+[rate_limits]
+cooldown = "30s"        # when the upstream names no delay
+max_cooldown = "5m"     # the longest Retry-After that will be honoured
+```
+
+The upstream's own `Retry-After` wins when it sends one, clamped to
+`max_cooldown` — a header asking for an hour would otherwise empty a ladder on
+one busy minute. A cooldown is per **rung**, not per provider: one model being
+throttled says nothing about another on the same marketplace. And only a 429
+parks a rung. A 500 or a timeout says the upstream broke, which the next request
+has every reason to re-test.
+
+A parked rung is skipped exactly as a priced-out one is, and says so in the 502
+body: `rate limited, retry in 12s`.
+
 ## Session pinning
 
 Marketplaces bill cached prompt tokens at a fraction of the normal rate, but a
@@ -206,9 +255,35 @@ one vocabulary and accepts steering in another — `OpenRouter` reports
 `DigitalOcean` but routes on `digitalocean`, and a quantized endpoint answers to
 `deepinfra/fp8`. The router resolves one to the other, so a pin actually lands.
 
+## Direct providers
+
+Not every model is resold. `kind = "mistral"` reaches Mistral's own API, where
+there is one seller: no order book, no balance to poll, and nothing for a
+ceiling to bind against — so a ceiling on such a provider or its rungs is
+refused at load time rather than silently skipping every rung under it for
+missing price data. A rung here is a choice of model.
+
+```toml
+[providers.mistral]
+kind = "mistral"
+base_url = "https://api.mistral.ai"
+api_key_env = "MISTRAL_API_KEY"
+
+[[ladders]]
+name = "scribe"
+  [[ladders.rungs]]
+  provider = "mistral"
+  model = "labs-leanstral-1-5"
+```
+
+A ladder of one rung is how this router says "this model or nothing". Mistral
+serves only the OpenAI surface, so an Anthropic-wire request to such a rung is
+declined before it is sent rather than translated.
+
 ## Marketplaces
 
-Both are supported, and their differences are real rather than cosmetic.
+Both marketplaces are supported — see [Direct providers](#direct-providers) for
+the third kind — and their differences are real rather than cosmetic.
 `docs/specs/marketplace-apis.md` records what each API actually does, verified
 live — including two findings that shaped the design:
 
@@ -217,7 +292,7 @@ live — including two findings that shaped the design:
   does bind, so a dollar ceiling is restated as the equivalent minimum discount
   against the model's direct price.
 - **`OpenRouter` enforces `provider.max_price` properly**, answering an
-  unsatisfiable ceiling with a 404 that the router reads as "step down".
+  unsatisfiable ceiling with a 404 that the router reads as "this rung is out".
 
 ## Development
 

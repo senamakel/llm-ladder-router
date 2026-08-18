@@ -620,10 +620,6 @@ fn only_the_marketplaces_are_marketplaces() {
 /// passes.
 #[test]
 fn the_shipped_multipliers_keep_each_ladder_about_what_it_is_for() {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
-        .unwrap();
-    let config = Config::parse(&text).unwrap();
-
     fn multipliers(ladder: &Ladder) -> Vec<f64> {
         ladder
             .rungs
@@ -631,6 +627,10 @@ fn the_shipped_multipliers_keep_each_ladder_about_what_it_is_for() {
             .map(Rung::effective_score_multiplier)
             .collect()
     }
+
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+        .unwrap();
+    let config = Config::parse(&text).unwrap();
 
     let max = config.ladder("max-reasoning").unwrap();
     let pro = max.rungs[0].effective_score_multiplier();
