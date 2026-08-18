@@ -45,18 +45,25 @@ min_balance_usd = 0.50
 # Each marketplace resells many sub-providers whose prices move independently,
 # so each carries its own ceiling that holds no matter which ladder or rung got
 # there. A rung's own ceiling combines with this one by taking the tighter.
+#
+# These sit at the `max-reasoning` ladder's ceiling rather than the cheap
+# ladders': the tighter of the two wins, so a provider ceiling of 0.50 would
+# silently clamp that ladder's 1.00 rungs back to 0.50 and the depth it pays for
+# would never be bought. Every rung below still carries its own, stricter
+# ceiling, which is what actually binds on the cheap ladders — this one is the
+# backstop against a marketplace-wide price move, not the day-to-day limit.
 
 [providers.surplus]
 kind = "surplus"
 base_url = "https://api.surplusintelligence.ai"
 api_key_env = "SURPLUS_API_KEY"
-max_cost_per_1m = 0.50
+max_cost_per_1m = 1.00
 
 [providers.openrouter]
 kind = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
-max_cost_per_1m = 0.50
+max_cost_per_1m = 1.00
 headers = { "HTTP-Referer" = "https://opencompany.tinyhumans.ai/", "X-OpenRouter-Title" = "OpenCompany" }
 
 # Prices observed live on 2026-08-18, USD per million output tokens:
@@ -68,9 +75,15 @@ headers = { "HTTP-Referer" = "https://opencompany.tinyhumans.ai/", "X-OpenRouter
 #   surplus deepseek-v4-flash    0.1652  0.0162   0.1080   117
 #   openrouter deepseek-v4-flash      —  0.1372   0.2800    18
 #
-# Every ceiling below sits under its model's median offer, so a rung takes only
-# a genuinely discounted seller and steps down rather than paying near the
-# direct rate.
+# Every ceiling on `flash` and `reasoning` sits under its model's median offer,
+# so a rung takes only a genuinely discounted seller and steps down rather than
+# paying near the direct rate.
+#
+# `max-reasoning` is the deliberate exception: at 1.00 it sits above the median
+# for `deepseek-v4-pro` (0.63) and `glm-5.2` (0.90), so it admits a typical
+# seller rather than waiting for a discount — and still well under the 3.30 and
+# 3.74 direct rates. That is the trade it exists to make: a caller on this
+# ladder would rather pay the going rate than step down to a shallower model.
 
 # The cheap, high-throughput ladder: reach for Luna while the marketplace is
 # clearing it cheaply, fall back to Flash, and leave OpenRouter as the backstop

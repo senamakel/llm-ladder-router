@@ -21,12 +21,21 @@ POST /v1/chat/completions {"model": "reasoning", ...}
   x-ladder-rung: 1   x-ladder-provider: surplus   x-ladder-cap-per-1m: 0.3
 ```
 
-Two ladders ship in `config.example.toml`:
+Three ladders ship in `config.example.toml`:
 
-| Ladder | Rungs, in order |
-| --- | --- |
-| `flash` | surplus `gpt-5.6-luna` → surplus `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` |
-| `reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` |
+| Ladder | Rungs, in order | Ceilings |
+| --- | --- | --- |
+| `flash` | surplus `gpt-5.6-luna` → surplus `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 / 0.15 / 0.30 |
+| `reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → `deepseek-v4-flash` → openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 |
+| `max-reasoning` | surplus `deepseek-v4-pro` → `glm-5.2` → `gpt-5.6-luna` → openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 |
+
+`max-reasoning` is the odd one and deliberately so: it pays roughly three times
+what `reasoning` pays, and it asks for depth — `reasoning_effort = "high"` on
+every rung, `xhigh` on the one model family that takes more. Every rung is a
+reasoning model, so it steps down in price without stepping down in kind. It is
+for the handful of callers whose answer keeps improving while the model thinks
+longer, not for anything on a per-turn budget. See
+[Reasoning depth](#reasoning-depth).
 
 ## Quick start
 

@@ -365,8 +365,8 @@ fn the_shipped_example_config_is_valid() {
     // ships, and a container that binds loopback answers nobody.
     assert_eq!(config.server.bind, "0.0.0.0:6969");
 
-    // The example is the documentation for the two ladders the router ships
-    // with; a change to either should be deliberate.
+    // The example is the documentation for the three ladders the router ships
+    // with; a change to any of them should be deliberate.
     assert_eq!(
         config
             .ladder("flash")
@@ -398,6 +398,39 @@ fn the_shipped_example_config_is_valid() {
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
+
+    let max = config.ladder("max-reasoning").unwrap();
+    assert_eq!(
+        max.rungs
+            .iter()
+            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("surplus", "deepseek-v4-pro"),
+            ("surplus", "glm-5.2"),
+            ("surplus", "gpt-5.6-luna"),
+            ("openrouter", "deepseek/deepseek-v4-pro"),
+        ],
+        "no rung of the deepest ladder may be a fast model"
+    );
+
+    // Every rung asks for depth, and the effort each one asks for is the one
+    // its model family accepts.
+    assert_eq!(max.effort_for(&max.rungs[0]).as_deref(), Some("high"));
+    assert_eq!(max.effort_for(&max.rungs[2]).as_deref(), Some("xhigh"));
+
+    // The provider ceilings must not clamp it. The tighter of the two wins, so
+    // a marketplace ceiling below a rung's own would silently undo the price
+    // this ladder was written to pay — and the ladder would step down to a
+    // cheaper model while reading as though it had not.
+    for rung in &max.rungs {
+        let cap = config.cap_for(rung).unwrap();
+        assert!(
+            (cap - rung.max_cost_per_1m.unwrap()).abs() < f64::EPSILON,
+            "`{}` is clamped to {cap} by its provider's ceiling",
+            rung.model
+        );
+    }
 }
 
 /// A ladder-level effort reaches every rung, and a rung's own overrides it.
