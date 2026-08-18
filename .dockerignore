@@ -1,0 +1,24 @@
+# Keep the build context small and secrets out of it. Anything listed here is
+# invisible to `docker build`, so it can never end up in a layer.
+
+# Secrets and local state.
+.env
+.env.*
+config.toml
+.run/
+
+# Build output — the image compiles from source in its own stage.
+target/
+worktrees/
+
+# Version control and CI metadata.
+.git/
+.github/
+.gitignore
+
+# Nothing the binary needs at build or run time.
+docs/
+examples/
+tests/
+README.md
+*.md
