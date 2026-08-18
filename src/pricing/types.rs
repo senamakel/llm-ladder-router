@@ -96,7 +96,7 @@ impl ModelPrices {
     /// admitted under `cap`.
     ///
     /// A marketplace names the sub-provider that served in one vocabulary and
-    /// accepts steering in another — `OpenRouter` reports "DigitalOcean" but
+    /// accepts steering in another — `OpenRouter` reports "`DigitalOcean`" but
     /// routes on "digitalocean", and a quantized endpoint answers to
     /// "deepinfra/fp8". Matching case- and space-insensitively against both the
     /// display name and the slug is what lets a session return to the

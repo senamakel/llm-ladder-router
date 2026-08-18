@@ -4,6 +4,13 @@
 
 use std::time::{Duration, Instant};
 
+/// An instant `seconds` in the past, or now if the clock has not run that long.
+fn ago(seconds: u64) -> Instant {
+    Instant::now()
+        .checked_sub(Duration::from_secs(seconds))
+        .unwrap_or_else(Instant::now)
+}
+
 use super::*;
 
 fn pin(rung: usize) -> Pin {
@@ -65,7 +72,7 @@ fn unpinning_a_session_that_was_never_pinned_is_harmless() {
 fn an_expired_pin_is_not_returned() {
     let mut pins = SessionPins::new(Duration::ZERO, 100);
     let mut stale = pin(0);
-    stale.pinned_at = Instant::now() - Duration::from_secs(1);
+    stale.pinned_at = ago(1);
     pins.pin("thread-1", stale);
 
     // Past the TTL the conversation is assumed abandoned and its cache cold.
@@ -76,7 +83,7 @@ fn an_expired_pin_is_not_returned() {
 fn expired_pins_are_evicted_when_new_ones_arrive() {
     let mut pins = SessionPins::new(Duration::from_millis(1), 100);
     let mut stale = pin(0);
-    stale.pinned_at = Instant::now() - Duration::from_secs(60);
+    stale.pinned_at = ago(60);
     pins.pin("old", stale);
 
     pins.pin("new", pin(1));
@@ -90,10 +97,10 @@ fn expired_pins_are_evicted_when_new_ones_arrive() {
 fn the_store_stays_within_its_bound_by_dropping_the_oldest() {
     let mut pins = SessionPins::new(Duration::from_secs(3600), 3);
 
-    for index in 0..6 {
+    for index in 0..6_u32 {
         let mut entry = pin(0);
         // Space them out so "oldest" is unambiguous.
-        entry.pinned_at = Instant::now() - Duration::from_secs(60 - index as u64);
+        entry.pinned_at = ago(60 - u64::from(index));
         pins.pin(format!("thread-{index}"), entry);
     }
 

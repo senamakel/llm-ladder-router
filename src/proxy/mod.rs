@@ -455,7 +455,7 @@ async fn dispatch(
 ///
 /// The configured header wins; otherwise the identifiers the two APIs already
 /// carry are used, so an unmodified client still gets sticky routing. Anthropic
-/// puts it in `metadata.user_id` and OpenAI in `user`.
+/// puts it in `metadata.user_id` and `OpenAI` in `user`.
 fn session_of(state: &State, headers: &HeaderMap, body: &serde_json::Value) -> Option<String> {
     if !state.config.sessions.enabled {
         return None;
