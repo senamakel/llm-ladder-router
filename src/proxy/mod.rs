@@ -446,12 +446,54 @@ async fn dispatch(
     }
 }
 
+/// The conversation this request belongs to, if any.
+///
+/// The configured header wins; otherwise the identifiers the two APIs already
+/// carry are used, so an unmodified client still gets sticky routing. Anthropic
+/// puts it in `metadata.user_id` and OpenAI in `user`.
+fn session_of(state: &State, headers: &HeaderMap, body: &serde_json::Value) -> Option<String> {
+    if !state.config.sessions.enabled {
+        return None;
+    }
+
+    let from_header = headers
+        .get(state.config.sessions.header.as_str())
+        .and_then(|value| value.to_str().ok());
+
+    from_header
+        .map(str::to_string)
+        .or_else(|| {
+            body.get("metadata")
+                .and_then(|metadata| metadata.get("user_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            body.get("user")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .map(|session| session.trim().to_string())
+        .filter(|session| !session.is_empty())
+}
+
+/// The sub-provider a relayed response reports having served it.
+fn sub_provider_of(response: &Response) -> Option<String> {
+    response
+        .headers()
+        .get(types::HEADER_SUB_PROVIDER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+}
+
 /// Stamps a response with the decision that produced it.
 fn with_routing_headers(
     mut response: Response,
     ladder: &str,
     chosen: &Chosen,
     skipped: usize,
+    session: Option<&str>,
+    pinned: bool,
 ) -> Response {
     let headers = response.headers_mut();
     set(headers, types::HEADER_LADDER, ladder);
@@ -461,6 +503,10 @@ fn with_routing_headers(
     set(headers, types::HEADER_SKIPPED, &skipped.to_string());
     if let Some(cap) = chosen.cap_per_1m {
         set(headers, types::HEADER_CAP, &cap.to_string());
+    }
+    if let Some(session) = session {
+        set(headers, types::HEADER_SESSION, session);
+        set(headers, types::HEADER_PINNED, if pinned { "true" } else { "false" });
     }
     response
 }
