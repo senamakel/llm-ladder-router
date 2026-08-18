@@ -26,13 +26,13 @@ COPY config.example.toml ./config.example.toml
 RUN touch src/lib.rs bin/ladder.rs \
     && cargo build --release --locked --bin ladder
 
-# The container's default configuration is the committed example with one
-# change: it binds every interface rather than loopback, because loopback inside
-# a container is reachable by nothing. Deriving it here keeps a single source of
-# truth for the ladders.
+# The container ships the committed example as its default configuration. The
+# assertion is the point: loopback inside a container is reachable by nothing,
+# so a config that ever went back to 127.0.0.1 must fail the build rather than
+# produce an image that silently answers no one.
 RUN mkdir -p /out \
-    && sed 's|^bind = "127\.0\.0\.1:|bind = "0.0.0.0:|' config.example.toml > /out/config.toml \
-    && grep -q '^bind = "0.0.0.0:' /out/config.toml
+    && cp config.example.toml /out/config.toml \
+    && grep -q '^bind = "0\.0\.0\.0:' /out/config.toml
 
 FROM debian:bookworm-slim AS runtime
 

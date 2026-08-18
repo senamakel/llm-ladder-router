@@ -4,7 +4,7 @@
 # safe to commit. Copy it to `config.toml` and adjust.
 
 [server]
-bind = "127.0.0.1:6969"
+bind = "0.0.0.0:6969"
 # A single upstream attempt that outlives this is treated as a rung failure and
 # the ladder advances.
 request_timeout = "120s"
