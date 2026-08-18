@@ -8,7 +8,8 @@
 mod types;
 
 pub use types::{
-    Config, CostBasis, Credits, Ladder, Pricing, Provider, ProviderKind, Rung, Server, Sessions,
+    Config, CostBasis, Credits, Ladder, Pricing, Provider, ProviderKind, RateLimits, Rung, Server,
+    Sessions,
 };
 
 use crate::error::{Error, Result};
@@ -53,6 +54,8 @@ impl Config {
     /// - [`Error::UnknownProvider`] if a rung names an undefined provider.
     /// - [`Error::InvalidPrice`] if a ceiling or a score multiplier is not
     ///   positive and finite.
+    /// - [`Error::UnpriceableCeiling`] if a ceiling is set on a direct provider
+    ///   or one of its rungs, where no order book exists to check it against.
     /// - [`Error::Empty`] if a declared `reasoning_effort` is blank, which would
     ///   otherwise reach an upstream as an empty string and be rejected there.
     fn validate(&self) -> Result<()> {
@@ -67,6 +70,17 @@ impl Config {
                 provider.max_cost_per_1m,
                 &format!("providers.{name}.max_cost_per_1m"),
             )?;
+            // A ceiling on a direct endpoint is checked against an order book
+            // that does not exist, so every rung under it would be skipped for
+            // missing price data — a ladder that silently serves nothing. Said
+            // at load time, where it is a typo, rather than at 3am, where it is
+            // an outage.
+            if !provider.kind.is_marketplace() && provider.max_cost_per_1m.is_some() {
+                return Err(Error::UnpriceableCeiling {
+                    field: format!("providers.{name}.max_cost_per_1m"),
+                    provider: name.clone(),
+                });
+            }
         }
 
         let mut seen = std::collections::BTreeSet::new();
@@ -106,6 +120,17 @@ impl Config {
                     rung.score_multiplier,
                     &format!("ladder {} rung {index} score_multiplier", ladder.name),
                 )?;
+                if rung.max_cost_per_1m.is_some()
+                    && self
+                        .providers
+                        .get(&rung.provider)
+                        .is_some_and(|provider| !provider.kind.is_marketplace())
+                {
+                    return Err(Error::UnpriceableCeiling {
+                        field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+                        provider: rung.provider.clone(),
+                    });
+                }
             }
         }
 

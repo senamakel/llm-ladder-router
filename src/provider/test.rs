@@ -350,3 +350,26 @@ fn no_declared_effort_inserts_nothing() {
     apply_reasoning_effort(&mut body, &chosen(), Wire::OpenAi);
     assert!(body.get("reasoning_effort").is_none());
 }
+
+/// The upstream's own backoff is read when it gives one, and only in the form
+/// that is unambiguous.
+#[test]
+fn retry_after_is_read_in_its_delta_seconds_form() {
+    assert_eq!(
+        parse_retry_after(Some("45")),
+        Some(std::time::Duration::from_secs(45))
+    );
+    assert_eq!(
+        parse_retry_after(Some("  45  ")),
+        Some(std::time::Duration::from_secs(45))
+    );
+    // "Retry immediately" is not a request to be parked.
+    assert_eq!(parse_retry_after(Some("0")), None);
+    // The HTTP-date form is legal and would need a clock-skew guess to convert;
+    // the configured default is a better answer than a guess.
+    assert_eq!(
+        parse_retry_after(Some("Wed, 21 Oct 2026 07:28:00 GMT")),
+        None
+    );
+    assert_eq!(parse_retry_after(None), None);
+}

@@ -365,7 +365,7 @@ fn the_shipped_example_config_is_valid() {
     // ships, and a container that binds loopback answers nobody.
     assert_eq!(config.server.bind, "0.0.0.0:6969");
 
-    // The example is the documentation for the three ladders the router ships
+    // The example is the documentation for the four ladders the router ships
     // with; a change to any of them should be deliberate.
     assert_eq!(
         config
@@ -398,6 +398,13 @@ fn the_shipped_example_config_is_valid() {
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
+
+    // One rung, one seller, no ceiling: "this model or nothing".
+    let scribe = config.ladder("scribe").unwrap();
+    assert_eq!(scribe.rungs.len(), 1);
+    assert_eq!(scribe.rungs[0].model, "labs-leanstral-1-5");
+    assert!(config.cap_for(&scribe.rungs[0]).is_none());
+    assert!(!config.providers["mistral"].kind.is_marketplace());
 
     let max = config.ladder("max-reasoning").unwrap();
     assert_eq!(
@@ -518,5 +525,130 @@ fn a_blank_reasoning_effort_is_rejected() {
     assert!(
         matches!(&error, Error::Empty { what } if what.contains("reasoning_effort")),
         "unexpected error: {error}"
+    );
+}
+
+/// A rate limit parks a rung for as long as the upstream asked, and for the
+/// configured default when it asked for nothing.
+#[test]
+fn the_upstream_backoff_wins_and_the_default_fills_in() {
+    let limits = RateLimits::default();
+
+    let asked = limits.cooldown_for(Some(std::time::Duration::from_secs(90)));
+    assert_eq!(asked.duration, std::time::Duration::from_secs(90));
+    assert!(asked.requested);
+
+    let silent = limits.cooldown_for(None);
+    assert_eq!(silent.duration, limits.cooldown);
+    assert!(!silent.requested);
+}
+
+/// A header asking for an hour would take a rung out of its ladder for an hour
+/// on one busy minute, and a ladder whose good rungs are parked serves from its
+/// worst.
+#[test]
+fn an_outsized_backoff_is_clamped() {
+    let limits = RateLimits::default();
+    let cooled = limits.cooldown_for(Some(std::time::Duration::from_secs(3600)));
+
+    assert_eq!(cooled.duration, limits.max_cooldown);
+}
+
+/// A direct provider publishes no order book, so a ceiling on it can never be
+/// checked and every rung under it would be skipped for missing price data —
+/// a ladder that silently serves nothing.
+#[test]
+fn a_ceiling_on_a_direct_provider_is_refused() {
+    let with_provider_cap = Config::parse(
+        r#"
+        [providers.mistral]
+        kind = "mistral"
+        base_url = "https://api.mistral.ai"
+        api_key_env = "MISTRAL_API_KEY"
+        max_cost_per_1m = 0.50
+
+        [[ladders]]
+        name = "scribe"
+          [[ladders.rungs]]
+          provider = "mistral"
+          model = "labs-leanstral-1-5"
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&with_provider_cap, Error::UnpriceableCeiling { provider, .. } if provider == "mistral"),
+        "unexpected error: {with_provider_cap}"
+    );
+
+    let with_rung_cap = Config::parse(
+        r#"
+        [providers.mistral]
+        kind = "mistral"
+        base_url = "https://api.mistral.ai"
+        api_key_env = "MISTRAL_API_KEY"
+
+        [[ladders]]
+        name = "scribe"
+          [[ladders.rungs]]
+          provider = "mistral"
+          model = "labs-leanstral-1-5"
+          max_cost_per_1m = 0.50
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&with_rung_cap, Error::UnpriceableCeiling { field, .. } if field.contains("rung 0")),
+        "unexpected error: {with_rung_cap}"
+    );
+}
+
+/// The price machinery applies to a marketplace and is meaningless against a
+/// direct endpoint; asking once here is what keeps every caller from growing
+/// its own match.
+#[test]
+fn only_the_marketplaces_are_marketplaces() {
+    assert!(ProviderKind::OpenRouter.is_marketplace());
+    assert!(ProviderKind::Surplus.is_marketplace());
+    assert!(!ProviderKind::Mistral.is_marketplace());
+}
+
+/// The shipped multipliers must express the ladders' intent, not just parse.
+///
+/// `max-reasoning` is the one that would fail silently: with mild multipliers a
+/// cheap seller on the weakest rung outranks the strongest model and the ladder
+/// quietly stops being about depth, while every test about *parsing* still
+/// passes.
+#[test]
+fn the_shipped_multipliers_keep_each_ladder_about_what_it_is_for() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+        .unwrap();
+    let config = Config::parse(&text).unwrap();
+
+    fn multipliers(ladder: &Ladder) -> Vec<f64> {
+        ladder
+            .rungs
+            .iter()
+            .map(Rung::effective_score_multiplier)
+            .collect()
+    }
+
+    let max = config.ladder("max-reasoning").unwrap();
+    let pro = max.rungs[0].effective_score_multiplier();
+    let weakest = multipliers(max).into_iter().fold(f64::INFINITY, f64::min);
+    assert!(
+        pro / weakest >= 4.0,
+        "the deepest ladder tolerates only a {}x premium for its strongest \
+         model, so a cheap seller on a weaker rung would win it",
+        pro / weakest
+    );
+
+    // The cheap ladder is the opposite bet: any of these will do, so nothing
+    // should be able to outrank price by much.
+    let flash = multipliers(config.ladder("flash").unwrap());
+    let spread = flash.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+        / flash.iter().copied().fold(f64::INFINITY, f64::min);
+    assert!(
+        spread <= 2.0,
+        "the throughput ladder has grown a {spread}x quality preference"
     );
 }

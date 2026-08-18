@@ -6,7 +6,31 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::cooldown::Cooldowns;
 use crate::pricing::{ModelPrices, Offer};
+
+/// The pinned selection with nothing cooling down, which is what every test
+/// below wants unless it is about cooldowns. Shadows the real function, so a
+/// test reads as the policy question it is asking rather than as an argument
+/// list; the cooldown tests call [`super::select_pinned`] directly.
+fn select_pinned(
+    config: &Config,
+    ladder: &Ladder,
+    prices: &PriceTable,
+    credits: &CreditState,
+    exclude: &[usize],
+    pin: Option<&Pin>,
+) -> Selection {
+    super::select_pinned(
+        config,
+        ladder,
+        prices,
+        credits,
+        &Cooldowns::new(),
+        exclude,
+        pin,
+    )
+}
 
 /// Four rungs across both providers, mirroring the shipped reasoning ladder.
 const CONFIG: &str = r#"
@@ -897,4 +921,92 @@ fn selecting_without_a_pin_is_never_reported_as_pinned() {
     let selection = select(&config, ladder, &all_affordable(), &funded(), &[]);
     assert!(!selection.pinned);
     assert_eq!(selection.pin_rejected, None);
+}
+
+/// A rung that answered 429 is out of the running while it cools, and says how
+/// long it has left — the same shape as being priced out, because from the
+/// engine's side it is the same thing: this rung cannot serve right now.
+#[test]
+fn a_rate_limited_rung_is_skipped_while_it_cools() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+    let prices = prices(&[
+        ("surplus", "deepseek-v4-pro", 0.10),
+        ("surplus", "glm-5.2", 0.05),
+    ]);
+
+    let mut cooldowns = Cooldowns::new();
+    cooldowns.cool("surplus", "glm-5.2", std::time::Duration::from_secs(30));
+
+    let selection =
+        super::select_pinned(&config, ladder, &prices, &funded(), &cooldowns, &[], None);
+
+    // The cheapest rung is parked, so the request takes the next best rather
+    // than spending a round trip to be refused again.
+    assert_eq!(selection.chosen.unwrap().model, "deepseek-v4-pro");
+    let cooled = selection
+        .skipped
+        .iter()
+        .find(|skip| skip.model == "glm-5.2")
+        .expect("the rate-limited rung is reported");
+    match cooled.reason {
+        SkipReason::RateLimited { retry_in_secs } => assert!((25..=30).contains(&retry_in_secs)),
+        ref other => panic!("expected RateLimited, got {other:?}"),
+    }
+}
+
+/// A pin is not a way around a rate limit. The pinned rung goes through the
+/// same admissibility check as any other, so a throttled one drops its pin
+/// rather than being asked again for the sake of a warm cache.
+#[test]
+fn a_rate_limited_rung_loses_its_pin() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+    let mut cooldowns = Cooldowns::new();
+    cooldowns.cool(
+        "surplus",
+        "deepseek-v4-flash",
+        std::time::Duration::from_secs(30),
+    );
+
+    let pin = a_pin(2, Some(0.15), None);
+    let selection = super::select_pinned(
+        &config,
+        ladder,
+        &all_affordable(),
+        &funded(),
+        &cooldowns,
+        &[],
+        Some(&pin),
+    );
+
+    assert!(!selection.pinned);
+    assert_eq!(selection.pin_rejected, Some(PinRejected::RungUnavailable));
+    assert_ne!(selection.chosen.unwrap().rung, 2);
+}
+
+/// A cooldown that has run out is not a skip: the rung comes back on its own,
+/// with no refresh and nothing to reset.
+#[test]
+fn an_expired_cooldown_puts_the_rung_back() {
+    let config = config();
+    let ladder = config.ladder("reasoning").unwrap();
+    let prices = prices(&[("surplus", "glm-5.2", 0.05)]);
+
+    let mut cooldowns = Cooldowns::new();
+    cooldowns.cool("surplus", "glm-5.2", std::time::Duration::from_nanos(1));
+    std::thread::sleep(std::time::Duration::from_millis(2));
+
+    let selection =
+        super::select_pinned(&config, ladder, &prices, &funded(), &cooldowns, &[], None);
+
+    assert_eq!(selection.chosen.unwrap().model, "glm-5.2");
+}
+
+#[test]
+fn a_rate_limited_skip_reads_as_a_wait() {
+    assert_eq!(
+        SkipReason::RateLimited { retry_in_secs: 42 }.to_string(),
+        "rate limited, retry in 42s"
+    );
 }

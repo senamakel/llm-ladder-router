@@ -52,6 +52,12 @@ pub async fn refresh_prices_once(state: &State) {
         let Some(client) = state.clients.get(&provider) else {
             continue;
         };
+        // A direct endpoint has one seller and no order book. Its rungs carry
+        // no ceiling — refused at load time — so there is nothing here to
+        // check them against and nothing to poll for.
+        if !client.is_marketplace() {
+            continue;
+        }
         match client.fetch_prices(&model).await {
             Ok(prices) => {
                 tracing::debug!(
@@ -109,6 +115,12 @@ pub async fn refresh_credits_once(state: &State) {
                 variable = %client.credential_variable(),
                 "credential is unset, provider will be skipped"
             );
+            continue;
+        }
+
+        // As with prices: no account balance is published, and an unrecorded
+        // balance already means "usable" to the selection engine.
+        if !client.is_marketplace() {
             continue;
         }
 

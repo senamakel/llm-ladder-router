@@ -6,11 +6,14 @@
 //! request shape to the other is a bug, not a cosmetic difference, so the
 //! dispatch below always branches on [`ProviderKind`].
 
+pub mod mistral;
 pub mod openrouter;
 pub mod surplus;
 mod types;
 
-pub use types::{Dispatched, Disposition, Wire, apply_reasoning_effort, classify_status};
+pub use types::{
+    Dispatched, Disposition, Wire, apply_reasoning_effort, classify_status, parse_retry_after,
+};
 
 use crate::config::{Provider, ProviderKind};
 use crate::error::{Error, Result};
@@ -91,11 +94,30 @@ impl Client {
         let path = match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::endpoints_path(model),
             ProviderKind::Surplus => surplus::order_book_path(model),
+            ProviderKind::Mistral => return Err(self.no_market_data("order book")),
         };
         let body = self.get(&path).await?;
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::parse_endpoints(&body),
             ProviderKind::Surplus => surplus::parse_order_book(&body),
+            ProviderKind::Mistral => Err(self.no_market_data("order book")),
+        }
+    }
+
+    /// Whether this provider resells many sellers, and so has prices to poll.
+    ///
+    /// The refreshers ask before calling: a direct endpoint has nothing to
+    /// return, and a warning logged every cycle about a provider working
+    /// exactly as intended is how a log stops being read.
+    #[must_use]
+    pub fn is_marketplace(&self) -> bool {
+        self.provider.kind.is_marketplace()
+    }
+
+    fn no_market_data(&self, what: &str) -> Error {
+        Error::NoMarketData {
+            provider: self.name.clone(),
+            what: what.to_string(),
         }
     }
 
@@ -108,11 +130,13 @@ impl Client {
         let path = match self.provider.kind {
             ProviderKind::OpenRouter => "/credits".to_string(),
             ProviderKind::Surplus => surplus::balance_path().to_string(),
+            ProviderKind::Mistral => return Err(self.no_market_data("balance")),
         };
         let body = self.get(&path).await?;
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::parse_credits(&body),
             ProviderKind::Surplus => surplus::parse_balance(&body),
+            ProviderKind::Mistral => Err(self.no_market_data("balance")),
         }
     }
 
@@ -144,6 +168,19 @@ impl Client {
                 surplus::apply_routing(&mut body, chosen);
                 surplus::inference_path(chosen, wire)
             }
+            ProviderKind::Mistral => {
+                // Refused before the round trip rather than after it: there is
+                // no Anthropic surface here, and the failover loop reads this
+                // as the rung's own failure and moves to the next.
+                if !mistral::serves(wire) {
+                    return Err(Error::UnsupportedWire {
+                        provider: self.name.clone(),
+                        wire: "Anthropic Messages".to_string(),
+                    });
+                }
+                mistral::apply_routing(&mut body, chosen);
+                mistral::inference_path().to_string()
+            }
         };
 
         let mut request = self.request(reqwest::Method::POST, &path);
@@ -168,6 +205,12 @@ impl Client {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
+        let retry_after = types::parse_retry_after(
+            response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()),
+        );
         let bytes = response.bytes().await.map_err(|source| Error::Upstream {
             provider: self.name.clone(),
             source,
@@ -178,6 +221,7 @@ impl Client {
             status,
             served_by: served_by(&body),
             content_type,
+            retry_after,
             body,
         })
     }
@@ -188,6 +232,7 @@ impl Client {
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::classify(dispatched.status, &dispatched.body),
             ProviderKind::Surplus => surplus::classify(dispatched.status, &dispatched.body),
+            ProviderKind::Mistral => mistral::classify(dispatched.status, &dispatched.body),
         }
     }
 

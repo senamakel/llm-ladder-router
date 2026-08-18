@@ -28,6 +28,23 @@ pub struct Dispatched {
     /// The upstream content type, relayed unchanged so a streaming response
     /// stays a streaming response.
     pub content_type: Option<String>,
+    /// The backoff the upstream asked for on a rate limit, when it named one.
+    ///
+    /// Only the delta-seconds form is read. The HTTP-date form is legal and
+    /// nothing observed here sends it; guessing at a clock skew to convert one
+    /// would be a worse answer than falling back to the configured default.
+    pub retry_after: Option<std::time::Duration>,
+}
+
+/// Reads a `Retry-After` header in its delta-seconds form.
+///
+/// A zero is `None` rather than a zero-length cooldown: an upstream saying
+/// "retry immediately" is not asking to be parked, and parking it for no time
+/// at all would only add a map entry.
+#[must_use]
+pub fn parse_retry_after(value: Option<&str>) -> Option<std::time::Duration> {
+    let seconds: u64 = value?.trim().parse().ok()?;
+    (seconds > 0).then(|| std::time::Duration::from_secs(seconds))
 }
 
 /// Whether a failed attempt should advance the ladder or be returned as-is.

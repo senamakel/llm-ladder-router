@@ -32,6 +32,11 @@ pub enum SkipReason {
         /// was one at all.
         cheapest_per_1m: Option<f64>,
     },
+    /// The rung answered 429 recently and is still cooling down.
+    RateLimited {
+        /// How much longer it is out for, in seconds.
+        retry_in_secs: u64,
+    },
     /// The rung was tried and the upstream failed in a way that warrants
     /// falling through.
     UpstreamFailed {
@@ -65,6 +70,9 @@ impl std::fmt::Display for SkipReason {
                 ),
                 None => write!(formatter, "no usable seller under ${cap_per_1m}/Mtok"),
             },
+            Self::RateLimited { retry_in_secs } => {
+                write!(formatter, "rate limited, retry in {retry_in_secs}s")
+            }
             Self::UpstreamFailed { detail } => write!(formatter, "upstream failed: {detail}"),
         }
     }

@@ -46,6 +46,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod cooldown;
 pub mod credits;
 pub mod error;
 pub mod ladder;

@@ -90,6 +90,16 @@ pub enum Error {
         provider: String,
     },
 
+    /// A direct provider was asked for price or balance data it does not
+    /// publish.
+    #[error("{provider} is a direct endpoint and publishes no {what}")]
+    NoMarketData {
+        /// The provider that was called.
+        provider: String,
+        /// What was asked for.
+        what: String,
+    },
+
     /// A provider was asked for a wire format it does not serve.
     #[error("{provider} does not serve the {wire} API")]
     UnsupportedWire {

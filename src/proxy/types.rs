@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::Config;
+use crate::cooldown::Cooldowns;
 use crate::credits::CreditState;
 use crate::pricing::PriceTable;
 use crate::provider::Client;
@@ -51,4 +52,6 @@ pub struct State {
     pub credits: Arc<RwLock<CreditState>>,
     /// Which rung each live conversation is pinned to.
     pub sessions: Arc<RwLock<SessionPins>>,
+    /// Which rungs are out of service after a rate limit, and until when.
+    pub cooldowns: Arc<RwLock<Cooldowns>>,
 }

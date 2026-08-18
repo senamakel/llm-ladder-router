@@ -1,7 +1,8 @@
 //! The selection engine: which rung of a ladder should serve a request.
 //!
 //! This module performs no I/O. It takes the configuration, a price snapshot,
-//! the known balances, and any session pin, and returns the *best* rung that
+//! the known balances, the rungs currently cooling down after a rate limit, and
+//! any session pin, and returns the *best* rung that
 //! can serve along with a reason for every rung that could not. Keeping it pure
 //! is what makes the routing policy testable without a network, and what lets
 //! the proxy re-run it after an upstream failure by excluding the rungs already
@@ -19,6 +20,7 @@ mod types;
 pub use types::{Chosen, Selection, SkipReason, Skipped};
 
 use crate::config::{Config, Ladder, Rung};
+use crate::cooldown::Cooldowns;
 use crate::credits::CreditState;
 use crate::pricing::PriceTable;
 use crate::session::{Pin, PinRejected};
@@ -36,7 +38,15 @@ pub fn select(
     credits: &CreditState,
     exclude: &[usize],
 ) -> Selection {
-    select_pinned(config, ladder, prices, credits, exclude, None)
+    select_pinned(
+        config,
+        ladder,
+        prices,
+        credits,
+        &Cooldowns::new(),
+        exclude,
+        None,
+    )
 }
 
 /// As [`select`], but honoring a session's pin when it is still justified.
@@ -50,6 +60,7 @@ pub fn select_pinned(
     ladder: &Ladder,
     prices: &PriceTable,
     credits: &CreditState,
+    cooldowns: &Cooldowns,
     exclude: &[usize],
     pin: Option<&Pin>,
 ) -> Selection {
@@ -57,7 +68,7 @@ pub fn select_pinned(
     let mut pin_rejected = None;
 
     if let Some(pin) = pin {
-        match honor(config, ladder, prices, credits, exclude, pin) {
+        match honor(config, ladder, prices, credits, cooldowns, exclude, pin) {
             Ok(Some(chosen)) => {
                 return Selection {
                     skipped,
@@ -83,7 +94,7 @@ pub fn select_pinned(
             continue;
         }
 
-        match admit(config, ladder, prices, credits, rung, index) {
+        match admit(config, ladder, prices, credits, cooldowns, rung, index) {
             Ok(chosen) => candidates.push(chosen),
             Err(reason) => skipped.push(Skipped {
                 rung: index,
@@ -111,6 +122,7 @@ fn honor(
     ladder: &Ladder,
     prices: &PriceTable,
     credits: &CreditState,
+    cooldowns: &Cooldowns,
     exclude: &[usize],
     pin: &Pin,
 ) -> Result<Option<Chosen>, PinRejected> {
@@ -132,7 +144,7 @@ fn honor(
         return Ok(None);
     }
 
-    let mut chosen = admit(config, ladder, prices, credits, rung, pin.rung)
+    let mut chosen = admit(config, ladder, prices, credits, cooldowns, rung, pin.rung)
         .map_err(|_| PinRejected::RungUnavailable)?;
 
     // Steer back to the sub-provider holding the warm cache, but only if the
@@ -166,6 +178,7 @@ fn admit(
     ladder: &Ladder,
     prices: &PriceTable,
     credits: &CreditState,
+    cooldowns: &Cooldowns,
     rung: &Rung,
     index: usize,
 ) -> Result<Chosen, SkipReason> {
@@ -183,6 +196,16 @@ fn admit(
         config.credits.min_balance_usd,
     ) {
         return Err(reason);
+    }
+
+    // Checked before the prices, because a rung the upstream has just refused
+    // is not available at any price. This is what turns a 429 into one wasted
+    // round trip rather than one per request until the limit lifts.
+    if let Some(remaining) = cooldowns.remaining(&rung.provider, &rung.model) {
+        return Err(SkipReason::RateLimited {
+            // Rounded up, so a sub-second remainder never reads as "retry now".
+            retry_in_secs: remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0),
+        });
     }
 
     let cap = config.cap_for(rung);

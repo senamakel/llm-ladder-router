@@ -27,6 +27,9 @@ pub struct Config {
     /// How long a conversation stays pinned to the rung that served it.
     #[serde(default)]
     pub sessions: Sessions,
+    /// How a rate-limited rung is taken out of service and put back.
+    #[serde(default)]
+    pub rate_limits: RateLimits,
     /// The ladders, in no particular order; requests select one by name.
     pub ladders: Vec<Ladder>,
 }
@@ -272,6 +275,64 @@ impl Default for Sessions {
             ttl: Self::default_ttl(),
             max_entries: Self::default_max_entries(),
             header: Self::default_header(),
+        }
+    }
+}
+
+/// What to do with a rung that answers 429.
+///
+/// A rate limit is the upstream saying "not now", which is a fact about the
+/// next few seconds rather than about this one request. Remembering it is the
+/// difference between one wasted round trip and one per request until the
+/// limit lifts.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimits {
+    /// How long a rate-limited rung is skipped when the upstream did not say.
+    #[serde(default = "RateLimits::default_cooldown", with = "humantime_serde")]
+    pub cooldown: Duration,
+    /// The longest `Retry-After` that will be honoured.
+    ///
+    /// A header asking for an hour would otherwise take a rung out of its
+    /// ladder for an hour on the strength of one busy minute, and a ladder
+    /// whose good rungs are all parked is one serving from its worst.
+    #[serde(default = "RateLimits::default_max_cooldown", with = "humantime_serde")]
+    pub max_cooldown: Duration,
+}
+
+impl RateLimits {
+    fn default_cooldown() -> Duration {
+        Duration::from_secs(30)
+    }
+
+    fn default_max_cooldown() -> Duration {
+        Duration::from_secs(5 * 60)
+    }
+
+    /// The cooldown to apply, given whatever the upstream asked for.
+    ///
+    /// The upstream's own number wins when it gave one, clamped to
+    /// [`Self::max_cooldown`]; otherwise the configured default applies.
+    #[must_use]
+    pub fn cooldown_for(&self, retry_after: Option<Duration>) -> crate::cooldown::Cooled {
+        match retry_after {
+            Some(requested) => crate::cooldown::Cooled {
+                duration: requested.min(self.max_cooldown),
+                requested: true,
+            },
+            None => crate::cooldown::Cooled {
+                duration: self.cooldown,
+                requested: false,
+            },
+        }
+    }
+}
+
+impl Default for RateLimits {
+    fn default() -> Self {
+        Self {
+            cooldown: Self::default_cooldown(),
+            max_cooldown: Self::default_max_cooldown(),
         }
     }
 }

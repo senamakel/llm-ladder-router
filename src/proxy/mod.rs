@@ -90,6 +90,7 @@ pub fn build_with_credentials(
             config_sessions.ttl,
             config_sessions.max_entries,
         ))),
+        cooldowns: Arc::new(RwLock::new(crate::cooldown::Cooldowns::new())),
     };
 
     let app = axum::Router::new()
@@ -284,8 +285,17 @@ async fn walk(
             let prices = state.prices.read().await;
             let credits = state.credits.read().await;
             let sessions = state.sessions.read().await;
+            let cooldowns = state.cooldowns.read().await;
             let pin = session.as_deref().and_then(|session| sessions.get(session));
-            ladder::select_pinned(&state.config, ladder_config, &prices, &credits, &tried, pin)
+            ladder::select_pinned(
+                &state.config,
+                ladder_config,
+                &prices,
+                &credits,
+                &cooldowns,
+                &tried,
+                pin,
+            )
         };
 
         if let Some(reason) = &selection.pin_rejected {
@@ -337,7 +347,31 @@ async fn walk(
                     pinned,
                 );
             }
-            Attempt::Advance(detail) => {
+            Attempt::Advance {
+                detail,
+                retry_after,
+            } => {
+                // A 429 is the upstream saying "not now", which is true of the
+                // next request too. Parking the rung is what keeps a throttled
+                // provider from costing one wasted round trip per request until
+                // the limit lifts.
+                if let Some(retry_after) = retry_after {
+                    let cooled = state.config.rate_limits.cooldown_for(retry_after);
+                    state.cooldowns.write().await.cool(
+                        &chosen.provider,
+                        &chosen.model,
+                        cooled.duration,
+                    );
+                    tracing::warn!(
+                        ladder = %name,
+                        rung = chosen.rung,
+                        provider = %chosen.provider,
+                        model = %chosen.model,
+                        cooldown_secs = cooled.duration.as_secs(),
+                        upstream_asked = cooled.requested,
+                        "rung rate limited, cooling down"
+                    );
+                }
                 tracing::warn!(
                     ladder = %name,
                     rung = chosen.rung,
@@ -381,7 +415,13 @@ async fn walk(
 /// What one rung's dispatch produced.
 enum Attempt {
     Served(Response),
-    Advance(String),
+    /// The upstream failed on its own account. `retry_after` is `Some` when the
+    /// failure was a rate limit, carrying whatever backoff the upstream asked
+    /// for — `Some(None)` meaning it was throttled but named no delay.
+    Advance {
+        detail: String,
+        retry_after: Option<Option<std::time::Duration>>,
+    },
     CallerError(Response),
 }
 
@@ -394,7 +434,12 @@ async fn dispatch(
     let dispatched = match client.infer(chosen, wire, body).await {
         Ok(dispatched) => dispatched,
         // A transport failure is the upstream's, not the caller's.
-        Err(error) => return Attempt::Advance(error.to_string()),
+        Err(error) => {
+            return Attempt::Advance {
+                detail: error.to_string(),
+                retry_after: None,
+            };
+        }
     };
 
     let disposition = client.classify(&dispatched);
@@ -426,14 +471,21 @@ async fn dispatch(
     match disposition {
         Disposition::Served => Attempt::Served(built),
         Disposition::CallerError => Attempt::CallerError(built),
-        Disposition::Advance => Attempt::Advance(format!(
-            "{} {}",
-            dispatched.status,
-            String::from_utf8_lossy(&dispatched.body)
-                .chars()
-                .take(200)
-                .collect::<String>()
-        )),
+        Disposition::Advance => Attempt::Advance {
+            detail: format!(
+                "{} {}",
+                dispatched.status,
+                String::from_utf8_lossy(&dispatched.body)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ),
+            // Only a 429 parks the rung. A 500 or a timeout says the upstream
+            // broke, which the next request has every reason to re-test; a 429
+            // says it is *deliberately* refusing for a while.
+            retry_after: (dispatched.status == StatusCode::TOO_MANY_REQUESTS)
+                .then_some(dispatched.retry_after),
+        },
     }
 }
 
