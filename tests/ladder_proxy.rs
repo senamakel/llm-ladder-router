@@ -138,12 +138,26 @@ async fn openrouter_endpoints(State(state): State<MockState>) -> Json<serde_json
     let per_token = state.price_per_1m / 1_000_000.0;
     Json(serde_json::json!({
         "data": {
-            "endpoints": [{
-                "provider_name": "DeepInfra",
-                "tag": "deepinfra",
-                "pricing": { "prompt": per_token.to_string(), "completion": per_token.to_string() },
-                "status": 0,
-            }]
+            "endpoints": [
+                {
+                    "provider_name": "DeepInfra",
+                    "tag": "deepinfra",
+                    "pricing": {
+                        "prompt": per_token.to_string(),
+                        "completion": per_token.to_string(),
+                    },
+                    "status": 0,
+                },
+                {
+                    "provider_name": "DigitalOcean",
+                    "tag": "digitalocean",
+                    "pricing": {
+                        "prompt": per_token.to_string(),
+                        "completion": per_token.to_string(),
+                    },
+                    "status": 0,
+                },
+            ]
         }
     }))
 }
@@ -683,8 +697,10 @@ async fn a_pinned_session_is_steered_back_to_its_sub_provider() {
         0.10,
     )
     .await;
+    // The rung prefers "deepinfra", but the marketplace actually serves from
+    // DigitalOcean — so that is where the warm cache lives.
     let (openrouter, or_recorded) =
-        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+        mock_openrouter(Behavior::Serve("DigitalOcean".to_string()), 0.20).await;
     let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
 
     let client = reqwest::Client::new();
@@ -702,10 +718,16 @@ async fn a_pinned_session_is_steered_back_to_its_sub_provider() {
         assert_eq!(response.status(), 200);
     }
 
-    // The first call steers by the rung's configured preference; the second
-    // leads with the sub-provider that actually served, so the cache is warm.
+    // The first call steers by the rung's configured preference. The second
+    // leads with the sub-provider that actually served, resolved from the
+    // display name the marketplace reported to the slug it steers on.
     assert_eq!(steered_to(&or_recorded, 0).as_deref(), Some("deepinfra"));
-    assert_eq!(steered_to(&or_recorded, 1).as_deref(), Some("DeepInfra"));
+    assert_eq!(steered_to(&or_recorded, 1).as_deref(), Some("digitalocean"));
+
+    // The configured preference is kept as a fallback behind the warm one.
+    let second = &or_recorded.lock().unwrap().bodies[1];
+    assert_eq!(second["provider"]["order"][1], "deepinfra");
+    assert_eq!(second["provider"]["allow_fallbacks"], true);
 }
 
 #[tokio::test]
