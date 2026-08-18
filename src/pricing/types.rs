@@ -160,3 +160,11 @@ impl ModelPrices {
         )
     }
 }
+
+/// Folds a sub-provider name for comparison across the two vocabularies.
+fn fold(name: &str) -> String {
+    name.to_ascii_lowercase()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}

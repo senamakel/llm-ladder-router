@@ -130,14 +130,17 @@ fn honor(
     let mut chosen =
         admit(config, ladder, prices, credits, rung, pin.rung).map_err(|_| PinRejected::RungUnavailable)?;
 
-    // Steer back to the sub-provider holding the warm cache, but only if it is
-    // still one the ceiling admits — otherwise the pin would smuggle in a
-    // seller the budget has since ruled out.
+    // Steer back to the sub-provider holding the warm cache, but only if the
+    // ceiling still admits it — otherwise the pin would smuggle in a seller the
+    // budget has since ruled out. The name the marketplace reported and the
+    // slug it steers on differ, so resolve one to the other.
     if let Some(sub_provider) = &pin.sub_provider
-        && chosen.admitted.iter().any(|admitted| admitted == sub_provider)
+        && let Some(model_prices) = prices.get(&rung.provider, &rung.model)
+        && let Some(slug) =
+            model_prices.steering_slug(sub_provider, chosen.cap_per_1m, ladder.cost_basis)
     {
-        chosen.prefer.retain(|prefer| prefer != sub_provider);
-        chosen.prefer.insert(0, sub_provider.clone());
+        chosen.prefer.retain(|prefer| prefer != &slug);
+        chosen.prefer.insert(0, slug);
     }
 
     Ok(Some(chosen))
