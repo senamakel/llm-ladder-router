@@ -158,6 +158,14 @@ async fn upstream() -> String {
                 }))
             }),
         )
+        // Mistral's own path, which carries the version in the path rather than
+        // in the base URL. Echoes the body so a test can see the rewrite.
+        .route(
+            "/v1/chat/completions",
+            post(|body: axum::Json<serde_json::Value>| async move {
+                axum::Json(serde_json::json!({ "sent": body.0 }))
+            }),
+        )
         .route(
             "/messages",
             post(|headers: axum::http::HeaderMap| async move {
@@ -372,4 +380,114 @@ fn retry_after_is_read_in_its_delta_seconds_form() {
         None
     );
     assert_eq!(parse_retry_after(None), None);
+}
+
+fn mistral_client(base_url: &str) -> Client {
+    Client::with_credential(
+        "mistral",
+        Provider {
+            kind: ProviderKind::Mistral,
+            base_url: base_url.to_string(),
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    )
+}
+
+fn scribe_rung() -> Chosen {
+    Chosen {
+        rung: 0,
+        provider: "mistral".to_string(),
+        model: "labs-leanstral-1-5".to_string(),
+        cap_per_1m: None,
+        admitted: Vec::new(),
+        cheapest_per_1m: None,
+        min_discount_pct: None,
+        prefer: Vec::new(),
+        reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: None,
+    }
+}
+
+/// A direct endpoint has one seller, so there is no order book and no balance.
+/// Asked for either, it says so rather than inventing an empty answer that the
+/// engine would read as "every seller is down".
+#[tokio::test]
+async fn a_direct_provider_publishes_neither_prices_nor_a_balance() {
+    let client = mistral_client(&upstream().await);
+    assert!(!client.is_marketplace());
+
+    match client.fetch_prices("labs-leanstral-1-5").await {
+        Err(Error::NoMarketData { provider, what }) => {
+            assert_eq!(provider, "mistral");
+            assert_eq!(what, "order book");
+        }
+        other => panic!("expected NoMarketData, got {other:?}"),
+    }
+
+    match client.fetch_balance().await {
+        Err(Error::NoMarketData { what, .. }) => assert_eq!(what, "balance"),
+        other => panic!("expected NoMarketData, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_direct_provider_serves_the_openai_surface() {
+    let client = mistral_client(&upstream().await);
+
+    let dispatched = client
+        .infer(
+            &scribe_rung(),
+            Wire::OpenAi,
+            &serde_json::json!({ "model": "scribe", "messages": [] }),
+        )
+        .await
+        .unwrap();
+
+    assert!(dispatched.status.is_success());
+    let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
+    // The ladder name the caller sent is replaced by the rung's model, and the
+    // request went to Mistral's own path rather than a marketplace's.
+    assert_eq!(echoed["sent"]["model"], "labs-leanstral-1-5");
+}
+
+/// There is no Anthropic surface here, so the request is declined before the
+/// round trip. The failover loop reads that as this rung's failure and takes
+/// the next one.
+#[tokio::test]
+async fn a_direct_provider_declines_the_anthropic_surface() {
+    let client = mistral_client(&upstream().await);
+
+    match client
+        .infer(
+            &scribe_rung(),
+            Wire::Anthropic,
+            &serde_json::json!({ "messages": [] }),
+        )
+        .await
+    {
+        Err(Error::UnsupportedWire { provider, wire }) => {
+            assert_eq!(provider, "mistral");
+            assert_eq!(wire, "Anthropic Messages");
+        }
+        other => panic!("expected UnsupportedWire, got {other:?}"),
+    }
+}
+
+/// The marketplaces both poll; the direct endpoint is the one that does not.
+#[test]
+fn only_the_marketplaces_are_polled_for_market_data() {
+    for kind in [ProviderKind::OpenRouter, ProviderKind::Surplus] {
+        let client = Client::with_credential(
+            "market",
+            provider(kind),
+            reqwest::Client::new(),
+            Some("k".to_string()),
+        );
+        assert!(client.is_marketplace());
+    }
 }
