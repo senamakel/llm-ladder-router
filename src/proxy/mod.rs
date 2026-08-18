@@ -331,7 +331,7 @@ async fn walk(
                     state.sessions.write().await.pin(
                         session.clone(),
                         Pin {
-                            ladder: name.clone(),
+                            ladder: name.to_string(),
                             rung: chosen.rung,
                             provider: chosen.provider.clone(),
                             model: chosen.model.clone(),
@@ -385,7 +385,7 @@ async fn walk(
     problem(
         StatusCode::BAD_GATEWAY,
         &Error::LadderExhausted {
-            ladder: name.clone(),
+            ladder: name.to_string(),
         }
         .to_string(),
         &passed,
