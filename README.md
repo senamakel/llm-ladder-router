@@ -35,7 +35,7 @@ Five ladders ship in `config.example.toml`:
 | `reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, `deepseek-v4-flash`, openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 | 2.0 / 1.8 / 1.2 / 1.0 / 1.0 | — |
 | `max-reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 | 8.0 / 6.0 / 1.5 / 8.0 | `high` / `high` / `xhigh` / `high` |
 | `scribe` | mistral `labs-leanstral-1-5` | — | — | — |
-| `uncensored` | surplus `venice-uncensored-1.2`, venice `venice-uncensored-1.2` | 0.30 / — | 1.0 / 1.0 | — |
+| `uncensored` | surplus `venice-uncensored-1.2`, venice `venice-uncensored-1-2` | 0.30 / — | 1.0 / 1.0 | — |
 
 `max-reasoning` is the odd one and deliberately so: it pays roughly three times
 what `reasoning` pays, and it asks for depth — `reasoning_effort = "high"` on
@@ -319,8 +319,12 @@ name = "uncensored"
 
   [[ladders.rungs]]
   provider = "venice"
-  model = "venice-uncensored-1.2"
+  model = "venice-uncensored-1-2"
 ```
+
+The two spellings are the same model: a rung names it in its provider's own
+convention, and the marketplace writes the version with a dot where the house
+writes it with a hyphen.
 
 Both rungs are the same model, so nothing is traded away by falling through —
 only the discount is. The order comes out of the engine rather than the file: an

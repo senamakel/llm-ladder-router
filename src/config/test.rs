@@ -417,7 +417,7 @@ fn the_shipped_example_config_is_valid() {
             .collect::<Vec<_>>(),
         vec![
             ("surplus", "venice-uncensored-1.2"),
-            ("venice", "venice-uncensored-1.2"),
+            ("venice", "venice-uncensored-1-2"),
         ]
     );
     assert!(config.cap_for(&uncensored.rungs[1]).is_none());

@@ -536,7 +536,7 @@ fn uncensored_rung() -> Chosen {
     Chosen {
         rung: 1,
         provider: "venice".to_string(),
-        model: "venice-uncensored-1.2".to_string(),
+        model: "venice-uncensored-1-2".to_string(),
         cap_per_1m: None,
         admitted: Vec::new(),
         cheapest_per_1m: None,
@@ -555,7 +555,7 @@ async fn venice_publishes_neither_prices_nor_a_balance() {
     let client = venice_client(&upstream().await);
     assert!(!client.is_marketplace());
 
-    match client.fetch_prices("venice-uncensored-1.2").await {
+    match client.fetch_prices("venice-uncensored-1-2").await {
         Err(Error::NoMarketData { provider, what }) => {
             assert_eq!(provider, "venice");
             assert_eq!(what, "order book");
@@ -589,7 +589,7 @@ async fn venice_serves_the_openai_surface_without_its_house_system_prompt() {
 
     assert!(dispatched.status.is_success());
     let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
-    assert_eq!(echoed["sent"]["model"], "venice-uncensored-1.2");
+    assert_eq!(echoed["sent"]["model"], "venice-uncensored-1-2");
     assert_eq!(
         echoed["sent"]["venice_parameters"]["include_venice_system_prompt"],
         false

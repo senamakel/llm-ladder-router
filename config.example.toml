@@ -291,4 +291,7 @@ cost_basis = "completion"
 
   [[ladders.rungs]]
   provider = "venice"
-  model = "venice-uncensored-1.2"
+  # Venice's own spelling of the same model. A rung names a model in its
+  # provider's convention, and these two conventions genuinely differ — the
+  # marketplace writes the version with a dot, the house with a hyphen.
+  model = "venice-uncensored-1-2"

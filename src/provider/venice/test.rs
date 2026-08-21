@@ -9,7 +9,7 @@ fn chosen() -> Chosen {
     Chosen {
         rung: 1,
         provider: "venice".to_string(),
-        model: "venice-uncensored-1.2".to_string(),
+        model: "venice-uncensored-1-2".to_string(),
         cap_per_1m: None,
         admitted: Vec::new(),
         cheapest_per_1m: None,
@@ -27,7 +27,7 @@ fn the_model_is_rewritten_and_the_house_system_prompt_is_declined() {
 
     apply_routing(&mut body, &chosen());
 
-    assert_eq!(body["model"], "venice-uncensored-1.2");
+    assert_eq!(body["model"], "venice-uncensored-1-2");
     assert_eq!(
         body["venice_parameters"]["include_venice_system_prompt"],
         false
@@ -70,7 +70,7 @@ fn a_non_object_venice_parameters_is_left_alone() {
 
     apply_routing(&mut body, &chosen());
 
-    assert_eq!(body["model"], "venice-uncensored-1.2");
+    assert_eq!(body["model"], "venice-uncensored-1-2");
     assert_eq!(body["venice_parameters"], "yes");
 }
 
