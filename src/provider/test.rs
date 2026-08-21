@@ -197,6 +197,14 @@ async fn upstream() -> String {
                 axum::Json(serde_json::json!({ "sent": body.0 }))
             }),
         )
+        // Venice's own path, which roots its version at `/api/v1`. Echoes the
+        // body for the same reason.
+        .route(
+            "/api/v1/chat/completions",
+            post(|body: axum::Json<serde_json::Value>| async move {
+                axum::Json(serde_json::json!({ "sent": body.0 }))
+            }),
+        )
         .route(
             "/messages",
             post(|headers: axum::http::HeaderMap| async move {
@@ -509,7 +517,106 @@ async fn a_direct_provider_declines_the_anthropic_surface() {
     }
 }
 
-/// The marketplaces both poll; the direct endpoint is the one that does not.
+fn venice_client(base_url: &str) -> Client {
+    Client::with_credential(
+        "venice",
+        Provider {
+            kind: ProviderKind::Venice,
+            base_url: base_url.to_string(),
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    )
+}
+
+fn uncensored_rung() -> Chosen {
+    Chosen {
+        rung: 1,
+        provider: "venice".to_string(),
+        model: "venice-uncensored-1.2".to_string(),
+        cap_per_1m: None,
+        admitted: Vec::new(),
+        cheapest_per_1m: None,
+        min_discount_pct: None,
+        prefer: Vec::new(),
+        reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: None,
+    }
+}
+
+/// Venice is direct for the same reasons Mistral is, and answers the same way
+/// when asked for market data it does not publish.
+#[tokio::test]
+async fn venice_publishes_neither_prices_nor_a_balance() {
+    let client = venice_client(&upstream().await);
+    assert!(!client.is_marketplace());
+
+    match client.fetch_prices("venice-uncensored-1.2").await {
+        Err(Error::NoMarketData { provider, what }) => {
+            assert_eq!(provider, "venice");
+            assert_eq!(what, "order book");
+        }
+        other => panic!("expected NoMarketData, got {other:?}"),
+    }
+
+    match client.fetch_balance().await {
+        Err(Error::NoMarketData { provider, what }) => {
+            assert_eq!(provider, "venice");
+            assert_eq!(what, "balance");
+        }
+        other => panic!("expected NoMarketData, got {other:?}"),
+    }
+}
+
+/// The rewrite that matters on this provider travels with the request: the
+/// model, and the refusal of Venice's house system prompt.
+#[tokio::test]
+async fn venice_serves_the_openai_surface_without_its_house_system_prompt() {
+    let client = venice_client(&upstream().await);
+
+    let dispatched = client
+        .infer(
+            &uncensored_rung(),
+            Wire::OpenAi,
+            &serde_json::json!({ "model": "uncensored", "messages": [] }),
+        )
+        .await
+        .unwrap();
+
+    assert!(dispatched.status.is_success());
+    let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
+    assert_eq!(echoed["sent"]["model"], "venice-uncensored-1.2");
+    assert_eq!(
+        echoed["sent"]["venice_parameters"]["include_venice_system_prompt"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn venice_declines_the_anthropic_surface() {
+    let client = venice_client(&upstream().await);
+
+    match client
+        .infer(
+            &uncensored_rung(),
+            Wire::Anthropic,
+            &serde_json::json!({ "messages": [] }),
+        )
+        .await
+    {
+        Err(Error::UnsupportedWire { provider, wire }) => {
+            assert_eq!(provider, "venice");
+            assert_eq!(wire, "Anthropic Messages");
+        }
+        other => panic!("expected UnsupportedWire, got {other:?}"),
+    }
+}
+
+/// The marketplaces both poll; the direct endpoints are the ones that do not.
 #[test]
 fn only_the_marketplaces_are_polled_for_market_data() {
     for kind in [ProviderKind::OpenRouter, ProviderKind::Surplus] {
