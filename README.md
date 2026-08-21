@@ -27,7 +27,7 @@ POST /v1/chat/completions {"model": "reasoning", ...}
 Ladder order is not precedence. It is documentation, and the tie-break when two
 rungs score the same.
 
-Four ladders ship in `config.example.toml`:
+Five ladders ship in `config.example.toml`:
 
 | Ladder | Rungs | Ceilings | Multipliers | Depth |
 | --- | --- | --- | --- | --- |
@@ -35,6 +35,7 @@ Four ladders ship in `config.example.toml`:
 | `reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, `deepseek-v4-flash`, openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 | 2.0 / 1.8 / 1.2 / 1.0 / 1.0 | — |
 | `max-reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 | 8.0 / 6.0 / 1.5 / 8.0 | `high` / `high` / `xhigh` / `high` |
 | `scribe` | mistral `labs-leanstral-1-5` | — | — | — |
+| `uncensored` | surplus `venice-uncensored-1.2`, venice `venice-uncensored-1.2` | 0.30 / — | 1.0 / 1.0 | — |
 
 `max-reasoning` is the odd one and deliberately so: it pays roughly three times
 what `reasoning` pays, and it asks for depth — `reasoning_effort = "high"` on
@@ -296,6 +297,42 @@ name = "scribe"
 A ladder of one rung is how this router says "this model or nothing". Mistral
 serves only the OpenAI surface, so an Anthropic-wire request to such a rung is
 declined before it is sent rather than translated.
+
+`kind = "venice"` is the same shape for a different reason. Venice's uncensored
+model *is* resold, but whether a given marketplace still carries it next month
+is that marketplace's policy decision rather than a fact the router can lean on.
+So the `uncensored` ladder buys it on Surplus when Surplus is cheap and falls
+back to the house that publishes it when Surplus cannot serve:
+
+```toml
+[providers.venice]
+kind = "venice"
+base_url = "https://api.venice.ai"
+api_key_env = "VENICE_INFERENCE_KEY"
+
+[[ladders]]
+name = "uncensored"
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "venice-uncensored-1.2"
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "venice"
+  model = "venice-uncensored-1.2"
+```
+
+Both rungs are the same model, so nothing is traded away by falling through —
+only the discount is. The order comes out of the engine rather than the file: an
+unpriced rung has nothing to divide by its multiplier, so it ranks behind every
+rung that could be measured, and the direct rung serves exactly when the resold
+one is over its ceiling, stale, rate-limited, or gone.
+
+One Venice-specific rewrite travels with every request: Venice prepends a system
+prompt of its own unless told not to, and a tier that picked this model and
+silently got that framing on top of it is not the tier that was picked — so the
+router sets `venice_parameters.include_venice_system_prompt` to `false`. A
+caller who sends their own `venice_parameters` keeps every key they set.
 
 ## Marketplaces
 
