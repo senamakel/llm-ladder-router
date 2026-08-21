@@ -18,8 +18,10 @@
 //! request. See [`cooldown`].
 //!
 //! Two marketplaces are supported, and their differences are real rather than
-//! cosmetic. A third kind of provider is direct — one seller, no order book —
-//! for models no marketplace carries; see [`provider::mistral`]. `OpenRouter` publishes a per-sub-provider price list and enforces a
+//! cosmetic. Direct providers are the third kind — one seller, no order book —
+//! for models a marketplace may not carry: see [`provider::mistral`] for a
+//! model no marketplace resells, and [`provider::venice`] for one whose
+//! resellers cannot be relied on to keep carrying it. `OpenRouter` publishes a per-sub-provider price list and enforces a
 //! price ceiling directly. Surplus Intelligence publishes a full order book but
 //! ignores its documented price-cap parameters, so a ceiling is restated as the
 //! equivalent minimum discount, which it does enforce. See
