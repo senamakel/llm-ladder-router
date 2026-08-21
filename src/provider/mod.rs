@@ -9,6 +9,7 @@
 pub mod mistral;
 pub mod openrouter;
 pub mod surplus;
+pub mod venice;
 mod types;
 
 pub use types::{
@@ -94,13 +95,15 @@ impl Client {
         let path = match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::endpoints_path(model),
             ProviderKind::Surplus => surplus::order_book_path(model),
-            ProviderKind::Mistral => return Err(self.no_market_data("order book")),
+            ProviderKind::Mistral | ProviderKind::Venice => {
+                return Err(self.no_market_data("order book"));
+            }
         };
         let body = self.get(&path).await?;
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::parse_endpoints(&body),
             ProviderKind::Surplus => surplus::parse_order_book(&body),
-            ProviderKind::Mistral => Err(self.no_market_data("order book")),
+            ProviderKind::Mistral | ProviderKind::Venice => Err(self.no_market_data("order book")),
         }
     }
 
@@ -130,13 +133,15 @@ impl Client {
         let path = match self.provider.kind {
             ProviderKind::OpenRouter => "/credits".to_string(),
             ProviderKind::Surplus => surplus::balance_path().to_string(),
-            ProviderKind::Mistral => return Err(self.no_market_data("balance")),
+            ProviderKind::Mistral | ProviderKind::Venice => {
+                return Err(self.no_market_data("balance"));
+            }
         };
         let body = self.get(&path).await?;
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::parse_credits(&body),
             ProviderKind::Surplus => surplus::parse_balance(&body),
-            ProviderKind::Mistral => Err(self.no_market_data("balance")),
+            ProviderKind::Mistral | ProviderKind::Venice => Err(self.no_market_data("balance")),
         }
     }
 
@@ -180,6 +185,18 @@ impl Client {
                 }
                 mistral::apply_routing(&mut body, chosen);
                 mistral::inference_path().to_string()
+            }
+            ProviderKind::Venice => {
+                // Declined before the round trip for the same reason as
+                // Mistral: there is no Anthropic surface here to relay to.
+                if !venice::serves(wire) {
+                    return Err(Error::UnsupportedWire {
+                        provider: self.name.clone(),
+                        wire: "Anthropic Messages".to_string(),
+                    });
+                }
+                venice::apply_routing(&mut body, chosen);
+                venice::inference_path().to_string()
             }
         };
 
@@ -233,6 +250,7 @@ impl Client {
             ProviderKind::OpenRouter => openrouter::classify(dispatched.status, &dispatched.body),
             ProviderKind::Surplus => surplus::classify(dispatched.status, &dispatched.body),
             ProviderKind::Mistral => mistral::classify(dispatched.status, &dispatched.body),
+            ProviderKind::Venice => venice::classify(dispatched.status, &dispatched.body),
         }
     }
 
