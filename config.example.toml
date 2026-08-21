@@ -77,6 +77,22 @@ kind = "mistral"
 base_url = "https://api.mistral.ai"
 api_key_env = "MISTRAL_API_KEY"
 
+# Venice's own API, direct for the same reasons Mistral is, and here for a
+# different one. The model is the uncensored one, and whether any given
+# marketplace is reselling it this week is that marketplace's policy decision,
+# not a fact the router can rely on. A rung at the house that publishes it is
+# the floor under a tier that would otherwise vanish when a reseller changes its
+# mind. As with any direct provider, a ceiling on it is refused at load time.
+#
+# Venice prepends a system prompt of its own unless asked not to; the router
+# asks not to on every request, since a tier that chose this model and silently
+# got that framing is not the tier that was chosen. A caller who sends their own
+# `venice_parameters` stays in charge of theirs.
+[providers.venice]
+kind = "venice"
+base_url = "https://api.venice.ai"
+api_key_env = "VENICE_INFERENCE_KEY"
+
 [providers.openrouter]
 kind = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
@@ -244,3 +260,35 @@ name = "scribe"
   [[ladders.rungs]]
   provider = "mistral"
   model = "labs-leanstral-1-5"
+
+
+# The uncensored ladder: one model, reached two ways.
+#
+# Both rungs are the same model, so there is no quality trade here and no
+# multiplier worth tuning — only where it is bought. Surplus goes first because
+# it is the one of the two that can be cheap: it is priced, so it is ranked, and
+# a priced rung always outranks an unpriced one. Venice is the house that
+# publishes the model and prices it at one rate, which is exactly why it belongs
+# second — it cannot be outbid, it can only be fallen back to.
+#
+# That ordering is not the ladder file's doing. An unpriced rung has nothing to
+# divide by its multiplier, so the engine ranks it behind every rung it could
+# measure; the direct rung is reached when Surplus has no seller under the
+# ceiling, has gone stale, is rate-limited, or has stopped carrying the model at
+# all. Which is the failure this ladder exists to survive.
+[[ladders]]
+name = "uncensored"
+cost_basis = "completion"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "venice-uncensored-1.2"
+  score_multiplier = 1.0
+  # A resold seat on this model is worth taking at a discount and not worth
+  # taking at the going rate, because the going rate is what the second rung
+  # charges anyway.
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "venice"
+  model = "venice-uncensored-1.2"
