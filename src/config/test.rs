@@ -644,7 +644,7 @@ fn a_ceiling_on_venice_is_refused() {
         name = "uncensored"
           [[ladders.rungs]]
           provider = "venice"
-          model = "venice-uncensored-1.2"
+          model = "venice-uncensored-1-2"
           max_cost_per_1m = 0.50
         "#,
     )
