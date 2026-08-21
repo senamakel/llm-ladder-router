@@ -1,0 +1,281 @@
+# Router configuration.
+#
+# Credentials are named by environment variable, never inlined, so this file is
+# safe to commit. Copy it to `config.toml` and adjust.
+
+[server]
+bind = "0.0.0.0:6969"
+# A single upstream attempt that outlives this is treated as a rung failure and
+# the ladder advances.
+request_timeout = "120s"
+# The key callers must present, as `Authorization: Bearer <key>` or `x-api-key`.
+# Both spellings work on both surfaces. Change this before binding anywhere
+# other than loopback; omit it entirely to accept every caller.
+api_key = "QYethKqcc8gGpuj4wXpD"
+# Prefer this in a real deployment: when the named variable is set and
+# non-empty it wins over the literal above, so the secret stays out of the file.
+# api_key_env = "LADDER_API_KEY"
+
+[pricing]
+# How often the order books are re-read.
+refresh = "15m"
+# Price data older than this is not trusted; a capped rung whose prices are
+# stale is skipped rather than admitted on a guess.
+stale_after = "1h"
+
+# Prompt caches are warm only where the prefix was already seen, so a
+# conversation is pinned to the rung and sub-provider that served it and stays
+# there while that choice still fits the budget. A changed ceiling or a rung the
+# market can no longer satisfy drops the pin; it never overrides a ceiling.
+[sessions]
+enabled = true
+# Idle timeout. Every request refreshes the pin, so this expires abandoned
+# conversations rather than active ones.
+ttl = "30m"
+max_entries = 10000
+# Callers can also identify a thread with OpenAI's `user` field or Anthropic's
+# `metadata.user_id`, so an unmodified client still gets sticky routing.
+header = "x-ladder-session"
+
+[credits]
+refresh = "5m"
+# A provider with less than this much spendable balance is skipped entirely.
+min_balance_usd = 0.50
+
+# A 429 is the upstream refusing for a while, not failing. The rung that met one
+# is parked and skipped until it lifts, so a throttled provider costs one wasted
+# round trip rather than one per request. A `Retry-After` wins over the default
+# below and is clamped to `max_cooldown`, because a header asking for an hour
+# would otherwise empty a ladder on one busy minute.
+[rate_limits]
+cooldown = "30s"
+max_cooldown = "5m"
+
+# Each marketplace resells many sub-providers whose prices move independently,
+# so each carries its own ceiling that holds no matter which ladder or rung got
+# there. A rung's own ceiling combines with this one by taking the tighter.
+#
+# These sit at the `max-reasoning` ladder's ceiling rather than the cheap
+# ladders': the tighter of the two wins, so a provider ceiling of 0.50 would
+# silently clamp that ladder's 1.00 rungs back to 0.50 and the depth it pays for
+# would never be bought. Every rung below still carries its own, stricter
+# ceiling, which is what actually binds on the cheap ladders — this one is the
+# backstop against a marketplace-wide price move, not the day-to-day limit.
+
+[providers.surplus]
+kind = "surplus"
+base_url = "https://api.surplusintelligence.ai"
+api_key_env = "SURPLUS_API_KEY"
+max_cost_per_1m = 1.00
+
+# Mistral's own API, reached directly rather than through a reseller. One seller
+# means no order book, no balance endpoint, and nothing for a ceiling to bind
+# against — a rung here is a choice of model, and a ceiling on one is refused at
+# load time. It is for models no marketplace carries.
+[providers.mistral]
+kind = "mistral"
+base_url = "https://api.mistral.ai"
+api_key_env = "MISTRAL_API_KEY"
+
+[providers.openrouter]
+kind = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+# 2.50 rather than 1.00. `deepseek-v4-pro` lists at 1.98/1M completion here,
+# so the old backstop skipped every reasoning rung on this provider — invisible
+# until Surplus went down and both deep ladders came back
+# `ladder exhausted ladder=reasoning skipped=2`. A fallback that is silently
+# ineligible is not a fallback. Still well under the 3.30 direct rate this
+# ceiling exists to refuse.
+max_cost_per_1m = 2.50
+headers = { "HTTP-Referer" = "https://opencompany.tinyhumans.ai/", "X-OpenRouter-Title" = "OpenCompany" }
+
+# Prices observed live on 2026-08-18, USD per million output tokens:
+#
+#   model                        direct    best   median   eligible sellers
+#   surplus deepseek-v4-pro      3.3010  0.0783   0.6317   158
+#   surplus glm-5.2              3.7400  0.0097   0.9000   156
+#   surplus gpt-5.6-luna         0.6000  0.0240   0.5400    88
+#   surplus deepseek-v4-flash    0.1652  0.0162   0.1080   117
+#   openrouter deepseek-v4-flash      —  0.1372   0.2800    18
+#
+# Every ceiling on `flash` and `reasoning` sits under its model's median offer,
+# so a rung takes only a genuinely discounted seller and steps down rather than
+# paying near the direct rate.
+#
+# `max-reasoning` is the deliberate exception: at 1.00 it sits above the median
+# for `deepseek-v4-pro` (0.63) and `glm-5.2` (0.90), so it admits a typical
+# seller rather than waiting for a discount — and still well under the 3.30 and
+# 3.74 direct rates. That is the trade it exists to make: a caller on this
+# ladder would rather pay the going rate than step down to a shallower model.
+
+# Rungs are ranked, not stepped: each one's cheapest admitted seller is divided
+# by its `score_multiplier` and the lowest result serves. A multiplier is "how
+# many times the baseline model's price this one is still worth paying", so 1.0
+# is the baseline and rung order survives only as the tie-break.
+#
+# The same model carries a different multiplier on different ladders, which is
+# the point: what depth is worth is a property of the job, not of the model.
+
+# 2026-08-18: every ladder below now ends in an OpenRouter rung, and that is
+# the lesson of an outage rather than a price argument. Surplus spent roughly
+# fifteen minutes answering `403 Forbidden` as HTML from its own edge —
+# reproduced with a direct `curl`, so neither this router nor the key — and
+# five live runs died inside the same minute. Two things had to change for a
+# provider outage to be a step down instead of an ending: the failover loop
+# now advances on a retryable HTTP status and not only on a transport error,
+# and every ladder carries a rung on a second provider for it to advance to.
+# A ladder whose rungs share one provider has no failover, whatever its length.
+
+# The cheap, high-throughput ladder. The multipliers are close together because
+# on this ladder they nearly are: any of these will do, so price decides.
+[[ladders]]
+name = "flash"
+cost_basis = "completion"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "gpt-5.6-luna"
+  score_multiplier = 1.2
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+  score_multiplier = 1.0
+  # Set just under OpenRouter's cheapest endpoint, so this rung only falls
+  # through when Surplus has genuinely lost on price.
+  max_cost_per_1m = 0.15
+
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-flash"
+  score_multiplier = 1.0
+  max_cost_per_1m = 0.30
+  prefer = ["deepinfra"]
+
+  # The same model with no preferred seller, one step below the rung above.
+  # With `prefer` naming the only live seller, that endpoint going briefly
+  # unavailable emptied the ladder outright — `ladder exhausted ladder=flash
+  # skipped=1` between calls that served normally.
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-flash"
+  score_multiplier = 1.0
+  max_cost_per_1m = 0.40
+
+# The reasoning ladder: the strongest model the budget allows, stepping down
+# through Luna and Flash rather than failing.
+
+[[ladders]]
+name = "reasoning"
+cost_basis = "completion"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
+  score_multiplier = 2.0
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "glm-5.2"
+  score_multiplier = 1.8
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "gpt-5.6-luna"
+  score_multiplier = 1.2
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+  score_multiplier = 1.0
+  max_cost_per_1m = 0.15
+
+  # The reasoning-class rung on the second provider. Without it, this ladder
+  # falls through Surplus straight to a flash-class model, and a reasoning
+  # request answered by a fast model is the failure it is built to avoid.
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-pro"
+  score_multiplier = 2.0
+  max_cost_per_1m = 2.00
+
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-flash"
+  score_multiplier = 1.0
+  max_cost_per_1m = 0.30
+  prefer = ["deepinfra"]
+
+# The deepest ladder: for the handful of roles whose whole output is a
+# judgement nothing mechanical can check, where thinking longer is the only
+# thing that improves the answer.
+#
+# Two things separate it from `reasoning`. It asks for depth explicitly —
+# `reasoning_effort` is injected into every request that did not already carry
+# one — and it pays more for it: the ceilings sit above the reasoning ladder's
+# because a role that runs a few times an hour cannot spend what a role driving
+# every turn spends. It never steps below a reasoning model; a ladder whose last
+# rung is a fast model would silently answer a max-reasoning request with the
+# cheapest thing available, which is the failure this ladder exists to avoid.
+#
+# The effort word is per rung on purpose: the accepted values are a property of
+# the model family, and a rejected value is a 400 the failover loop hands back
+# to the caller rather than stepping past.
+
+[[ladders]]
+name = "max-reasoning"
+cost_basis = "completion"
+# The fallback, so a rung added in a hurry still asks for depth. Every rung
+# below names its own anyway: which words a model accepts is a fact about that
+# model, and reading it off the rung beats inferring it from a default two
+# screens up.
+reasoning_effort = "high"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
+  score_multiplier = 8.0
+  reasoning_effort = "high"
+  max_cost_per_1m = 1.00
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "glm-5.2"
+  score_multiplier = 6.0
+  reasoning_effort = "high"
+  max_cost_per_1m = 1.00
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "gpt-5.6-luna"
+  score_multiplier = 1.5
+  # The one rung whose model family takes a setting above `high`.
+  reasoning_effort = "xhigh"
+  max_cost_per_1m = 0.60
+
+  [[ladders.rungs]]
+  provider = "openrouter"
+  model = "deepseek/deepseek-v4-pro"
+  score_multiplier = 8.0
+  reasoning_effort = "high"
+  max_cost_per_1m = 2.00
+
+
+# The scribe ladder: one rung, one seller, one model.
+#
+# Leanstral is a Lean 4 proof-engineering model that no marketplace resells, so
+# it is reached at Mistral directly. There is nothing to rank and nothing to
+# step down to — a ladder of one is how this router says "this model or
+# nothing", which for a role whose output is checked by a kernel is the right
+# answer. A ceiling here would be refused at load time.
+[[ladders]]
+name = "scribe"
+
+  [[ladders.rungs]]
+  provider = "mistral"
+  model = "labs-leanstral-1-5"
