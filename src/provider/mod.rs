@@ -9,8 +9,8 @@
 pub mod mistral;
 pub mod openrouter;
 pub mod surplus;
-pub mod venice;
 mod types;
+pub mod venice;
 
 pub use types::{
     Dispatched, Disposition, Wire, apply_reasoning_effort, classify_status, parse_retry_after,

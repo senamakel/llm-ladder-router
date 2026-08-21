@@ -28,7 +28,10 @@ fn the_model_is_rewritten_and_the_house_system_prompt_is_declined() {
     apply_routing(&mut body, &chosen());
 
     assert_eq!(body["model"], "venice-uncensored-1.2");
-    assert_eq!(body["venice_parameters"]["include_venice_system_prompt"], false);
+    assert_eq!(
+        body["venice_parameters"]["include_venice_system_prompt"],
+        false
+    );
     // No ceiling travels: there is one seller, so there is nothing to filter.
     assert!(body.get("provider").is_none());
     assert_eq!(body["temperature"], 0);
@@ -48,8 +51,14 @@ fn a_caller_who_set_venice_parameters_keeps_them() {
 
     apply_routing(&mut body, &chosen());
 
-    assert_eq!(body["venice_parameters"]["include_venice_system_prompt"], true);
-    assert_eq!(body["venice_parameters"]["character_slug"], "some-character");
+    assert_eq!(
+        body["venice_parameters"]["include_venice_system_prompt"],
+        true
+    );
+    assert_eq!(
+        body["venice_parameters"]["character_slug"],
+        "some-character"
+    );
 }
 
 /// A caller who put something other than an object there has sent Venice a
