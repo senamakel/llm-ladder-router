@@ -121,9 +121,9 @@ against `messages`. OpenRouter accepts the role on both.
 This matters because a 400 is a caller error and does **not** advance the
 ladder, so an unfolded `developer` message is not a step down to the next rung,
 it is the request failing outright. The `codex` harness opens every turn with
-one, so Codex sessions could not reach a Surplus rung at all. `surplus::
-apply_routing` therefore rewrites `developer` to `system` in both `messages`
-and `input` before dispatch. It is the one place the router edits a caller's
+one, so Codex sessions could not reach a Surplus rung at all.
+`surplus::apply_routing` therefore rewrites `developer` to `system` in both
+`messages` and `input` before dispatch. It is the one place the router edits a caller's
 content, and `developer` is `system` renamed, so nothing is lost.
 
 ## Rung-advance signals
