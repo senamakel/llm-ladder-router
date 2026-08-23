@@ -4,16 +4,37 @@ use crate::ladder::Chosen;
 
 /// Which request/response format a caller is speaking.
 ///
-/// Both marketplaces serve both formats natively, so the router relays rather
-/// than translating: an Anthropic request reaches an Anthropic endpoint
-/// unchanged, and its response comes back unchanged. Translating between the
-/// two would lose fields on every round trip.
+/// Both marketplaces serve all three formats natively, so the router relays
+/// rather than translating: an Anthropic request reaches an Anthropic endpoint
+/// unchanged, and its response comes back unchanged. Translating between them
+/// would lose fields on every round trip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wire {
     /// `OpenAI` chat completions.
     OpenAi,
     /// Anthropic messages.
     Anthropic,
+    /// `OpenAI` responses.
+    ///
+    /// A distinct surface rather than a flavour of [`Wire::OpenAi`]: it has its
+    /// own request shape (`input` rather than `messages`), its own response
+    /// shape, and its own spelling of reasoning depth. It is also the only
+    /// surface some agent harnesses speak — the `codex` harness posts to
+    /// `/responses` and nothing else, so without this it cannot reach the
+    /// router at all.
+    Responses,
+}
+
+impl Wire {
+    /// The surface's name, for error messages a caller has to act on.
+    #[must_use]
+    pub fn api_name(self) -> &'static str {
+        match self {
+            Self::OpenAi => "OpenAI Chat Completions",
+            Self::Anthropic => "Anthropic Messages",
+            Self::Responses => "OpenAI Responses",
+        }
+    }
 }
 
 /// What a dispatched rung produced.
