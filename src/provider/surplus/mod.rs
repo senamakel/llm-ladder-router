@@ -136,7 +136,7 @@ pub fn balance_path() -> &'static str {
 /// deltas and is discarded. That is worse than an error: the run looks like it
 /// completed and produced nothing. Codex is the case in hand, and it speaks
 /// only this surface, so refusing here is what lets the ladder step down to a
-/// provider whose stream is complete (OpenRouter emits all nine events).
+/// provider whose stream is complete (`OpenRouter` emits all nine events).
 ///
 /// Refused before the round trip, in the manner of [`super::mistral::serves`],
 /// so the failover loop reads it as this rung failing rather than as the

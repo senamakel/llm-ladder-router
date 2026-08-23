@@ -135,7 +135,7 @@ pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wir
 /// A missing or non-boolean `stream` is not streaming, which matches every
 /// surface's own default.
 #[must_use]
-pub fn is_streaming(body: &serde_json::Value) -> bool {
+pub(crate) fn is_streaming(body: &serde_json::Value) -> bool {
     body.get("stream").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
