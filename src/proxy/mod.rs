@@ -1,4 +1,4 @@
-//! The `OpenAI`-compatible HTTP surface and the failover loop.
+//! The `OpenAI`- and Anthropic-compatible HTTP surfaces, and the failover loop.
 //!
 //! A request names a ladder in its `model` field. The router ranks that
 //! ladder's rungs, dispatches to the best one that can serve, and on any
@@ -98,11 +98,12 @@ pub fn build_with_credentials(
     };
 
     let app = axum::Router::new()
-        // The OpenAI surface, and the Anthropic Messages surface. Both are
-        // relayed to the marketplaces' own native endpoints for that format
-        // rather than translated, so no field is lost in either direction.
+        // The two OpenAI surfaces, and the Anthropic Messages surface. All
+        // three are relayed to the marketplaces' own native endpoints for that
+        // format rather than translated, so no field is lost in any direction.
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/messages", post(messages))
+        .route("/v1/responses", post(responses))
         .route("/v1/models", get(list_models))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(state.clone());
@@ -201,6 +202,21 @@ async fn messages(
     Json(body): Json<serde_json::Value>,
 ) -> Response {
     route(state, &headers, body, Wire::Anthropic).await
+}
+
+/// The `OpenAI` Responses-compatible entry point.
+///
+/// Its own route rather than a variant of [`chat_completions`], because the two
+/// are different APIs that happen to share a vendor: the request names its
+/// prompt in `input` rather than `messages`, the response is a `response`
+/// object rather than a `chat.completion`, and reasoning depth is spelled
+/// differently in both.
+async fn responses(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    route(state, &headers, body, Wire::Responses).await
 }
 
 /// Checks the caller's key against the configured one.

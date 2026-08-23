@@ -120,6 +120,7 @@ pub fn inference_path(wire: Wire) -> &'static str {
     match wire {
         Wire::OpenAi => "/chat/completions",
         Wire::Anthropic => "/messages",
+        Wire::Responses => "/responses",
     }
 }
 

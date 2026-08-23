@@ -174,13 +174,13 @@ impl Client {
                 surplus::inference_path(chosen, wire)
             }
             ProviderKind::Mistral => {
-                // Refused before the round trip rather than after it: there is
-                // no Anthropic surface here, and the failover loop reads this
-                // as the rung's own failure and moves to the next.
+                // Refused before the round trip rather than after it: only the
+                // chat-completions surface exists here, and the failover loop
+                // reads this as the rung's own failure and moves to the next.
                 if !mistral::serves(wire) {
                     return Err(Error::UnsupportedWire {
                         provider: self.name.clone(),
-                        wire: "Anthropic Messages".to_string(),
+                        wire: wire.api_name().to_string(),
                     });
                 }
                 mistral::apply_routing(&mut body, chosen);
