@@ -122,6 +122,30 @@ pub fn balance_path() -> &'static str {
     "/v1/buyer/me"
 }
 
+/// Whether Surplus can usefully serve this surface for this request.
+///
+/// Everything except a **streamed** responses request. Surplus serves that
+/// surface, and the non-streaming form is complete, but its event stream is
+/// not: it emits `response.created`, `response.output_item.added`,
+/// `response.output_text.delta` and `response.completed`, and stops there. It
+/// never sends `response.output_item.done`, and the `response` on
+/// `response.completed` carries no `output` array.
+///
+/// An agent client assembles its turn from the finished items, so it sees a
+/// turn with no output and ends silently — the model's answer arrives in the
+/// deltas and is discarded. That is worse than an error: the run looks like it
+/// completed and produced nothing. Codex is the case in hand, and it speaks
+/// only this surface, so refusing here is what lets the ladder step down to a
+/// provider whose stream is complete (`OpenRouter` emits all nine events).
+///
+/// Refused before the round trip, in the manner of [`super::mistral::serves`],
+/// so the failover loop reads it as this rung failing rather than as the
+/// caller's mistake.
+#[must_use]
+pub fn serves(wire: Wire, streaming: bool) -> bool {
+    !(wire == Wire::Responses && streaming)
+}
+
 /// The inference path for a chosen rung on a given wire format.
 ///
 /// A rung with a ceiling routes through the `/min{N}/` prefix, which is the

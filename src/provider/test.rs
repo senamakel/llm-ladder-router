@@ -630,6 +630,89 @@ async fn a_direct_provider_declines_every_surface_it_does_not_publish() {
     }
 }
 
+/// Surplus publishes the responses surface but its event stream is truncated,
+/// so only the *streaming* form is declined - before the round trip, which is
+/// what lets the failover loop take a rung whose stream is complete.
+///
+/// The narrowness is the point, and is asserted in both directions: refusing
+/// the non-streaming form too would strand traffic Surplus serves correctly,
+/// including the cheapest rungs on every ladder.
+#[tokio::test]
+async fn surplus_declines_only_a_streaming_responses_request() {
+    let base = upstream().await;
+    let client = Client::with_credential(
+        "surplus",
+        Provider {
+            kind: ProviderKind::Surplus,
+            base_url: base,
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    );
+
+    match client
+        .infer(
+            &surplus_rung(),
+            Wire::Responses,
+            &serde_json::json!({ "stream": true, "input": [] }),
+        )
+        .await
+    {
+        Err(Error::UnsupportedWire { provider, wire }) => {
+            assert_eq!(provider, "surplus");
+            // Named precisely: a caller told merely "does not serve the OpenAI
+            // Responses API" would conclude the surface is absent, and it is
+            // not - only its stream is unusable.
+            assert_eq!(wire, "streaming OpenAI Responses");
+        }
+        other => panic!("expected UnsupportedWire, got {other:?}"),
+    }
+
+    // Everything else still dispatches. The mock has no route for these, so
+    // what is being asserted is that a request went out at all rather than
+    // being refused locally.
+    for (wire, body) in [
+        (Wire::Responses, serde_json::json!({ "input": [] })),
+        (
+            Wire::Responses,
+            serde_json::json!({ "stream": false, "input": [] }),
+        ),
+        (
+            Wire::OpenAi,
+            serde_json::json!({ "stream": true, "messages": [] }),
+        ),
+        (
+            Wire::Anthropic,
+            serde_json::json!({ "stream": true, "messages": [] }),
+        ),
+    ] {
+        assert!(
+            client.infer(&surplus_rung(), wire, &body).await.is_ok(),
+            "{wire:?} with stream={:?} should have been dispatched",
+            body.get("stream")
+        );
+    }
+}
+
+fn surplus_rung() -> Chosen {
+    Chosen {
+        rung: 0,
+        provider: "surplus".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        cap_per_1m: None,
+        admitted: Vec::new(),
+        cheapest_per_1m: None,
+        min_discount_pct: None,
+        prefer: Vec::new(),
+        reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: None,
+    }
+}
+
 fn venice_client(base_url: &str) -> Client {
     Client::with_credential(
         "venice",
@@ -741,4 +824,18 @@ fn only_the_marketplaces_are_polled_for_market_data() {
         );
         assert!(client.is_marketplace());
     }
+}
+
+#[test]
+fn only_an_explicit_true_counts_as_a_streaming_request() {
+    use crate::provider::types::is_streaming;
+
+    assert!(is_streaming(&serde_json::json!({ "stream": true })));
+    // A missing, false, or non-boolean `stream` is every surface's own
+    // default, and reading it as streaming would refuse a Surplus rung that
+    // can serve the request perfectly well.
+    assert!(!is_streaming(&serde_json::json!({ "stream": false })));
+    assert!(!is_streaming(&serde_json::json!({ "stream": "true" })));
+    assert!(!is_streaming(&serde_json::json!({})));
+    assert!(!is_streaming(&serde_json::json!(42)));
 }
