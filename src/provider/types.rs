@@ -130,6 +130,15 @@ pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wir
     }
 }
 
+/// Whether an outgoing request asked for a streamed response.
+///
+/// A missing or non-boolean `stream` is not streaming, which matches every
+/// surface's own default.
+#[must_use]
+pub fn is_streaming(body: &serde_json::Value) -> bool {
+    body.get("stream").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
 /// Classifies an upstream response body by the marketplace-independent rules.
 ///
 /// Marketplace-specific codes are handled by each provider module before this

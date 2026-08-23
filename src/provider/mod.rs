@@ -170,6 +170,15 @@ impl Client {
                 openrouter::inference_path(wire).to_string()
             }
             ProviderKind::Surplus => {
+                // Refused before the round trip: Surplus's responses stream is
+                // truncated, and a client that reads it comes away with an
+                // empty turn rather than an error. See `surplus::serves`.
+                if !surplus::serves(wire, types::is_streaming(&body)) {
+                    return Err(Error::UnsupportedWire {
+                        provider: self.name.clone(),
+                        wire: "streaming OpenAI Responses".to_string(),
+                    });
+                }
                 surplus::apply_routing(&mut body, chosen);
                 surplus::inference_path(chosen, wire)
             }
