@@ -207,6 +207,24 @@ async fn upstream() -> String {
                         .unwrap_or_default(),
                 }))
             }),
+        )
+        // The OpenAI responses surface. Echoes both the body and the version
+        // header, so a test can see the rewrite and see that this surface is
+        // not mistaken for the Anthropic one.
+        .route(
+            "/responses",
+            post(
+                |headers: axum::http::HeaderMap, body: axum::Json<serde_json::Value>| async move {
+                    axum::Json(serde_json::json!({
+                        "provider": "DeepInfra",
+                        "sent": body.0,
+                        "anthropic_version": headers
+                            .get("anthropic-version")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default(),
+                    }))
+                },
+            ),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -309,6 +327,33 @@ async fn the_anthropic_surface_sends_the_version_header() {
     assert_eq!(body["anthropic_version"], "2023-06-01");
 }
 
+/// The responses surface reaches the responses endpoint, carries the
+/// credential, and must not pick up the Anthropic version header on the way.
+#[tokio::test]
+async fn the_responses_surface_reaches_the_responses_endpoint() {
+    let client = openrouter_client(&upstream().await);
+
+    let dispatched = client
+        .infer(
+            &chosen(),
+            Wire::Responses,
+            &serde_json::json!({ "model": "flash", "input": "hello" }),
+        )
+        .await
+        .unwrap();
+
+    assert!(dispatched.status.is_success());
+    let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
+    // The ladder name the caller sent is replaced by the rung's model...
+    assert_eq!(echoed["sent"]["model"], "deepseek/deepseek-v4-flash");
+    // ...the prompt is relayed untouched...
+    assert_eq!(echoed["sent"]["input"], "hello");
+    // ...and this is not the Anthropic surface.
+    assert_eq!(echoed["anthropic_version"], "");
+    assert_eq!(dispatched.served_by, Some("DeepInfra".to_string()));
+    assert_eq!(client.classify(&dispatched), Disposition::Served);
+}
+
 #[tokio::test]
 async fn an_unreachable_upstream_is_reported_as_an_upstream_error() {
     // Port 1 on loopback refuses connections immediately.
@@ -388,6 +433,62 @@ fn no_declared_effort_inserts_nothing() {
     let mut body = serde_json::json!({ "messages": [] });
     apply_reasoning_effort(&mut body, &chosen(), Wire::OpenAi);
     assert!(body.get("reasoning_effort").is_none());
+}
+
+/// The responses surface spells depth as a `reasoning` object. Sending the chat
+/// spelling would leave an unknown top-level key in the body and buy none of
+/// the depth the ladder declared.
+#[test]
+fn a_declared_effort_takes_the_responses_spelling_on_that_surface() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("high".to_string());
+    let mut body = serde_json::json!({ "model": "reasoning", "input": "hello" });
+
+    apply_reasoning_effort(&mut body, &chosen, Wire::Responses);
+
+    assert_eq!(body["reasoning"]["effort"], "high");
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "the chat-completions spelling must not also be sent"
+    );
+}
+
+/// The caller wins on the responses surface too, in either spelling.
+#[test]
+fn a_callers_own_depth_survives_on_the_responses_surface() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("xhigh".to_string());
+
+    let mut structured = serde_json::json!({ "input": "", "reasoning": { "effort": "low" } });
+    apply_reasoning_effort(&mut structured, &chosen, Wire::Responses);
+    assert_eq!(structured["reasoning"]["effort"], "low");
+
+    let mut flat = serde_json::json!({ "input": "", "reasoning_effort": "low" });
+    apply_reasoning_effort(&mut flat, &chosen, Wire::Responses);
+    assert!(flat.get("reasoning").is_none());
+}
+
+/// Each surface is relayed to the marketplace's own native endpoint for that
+/// format, so no field is lost translating between them.
+#[test]
+fn each_surface_maps_to_its_own_native_path() {
+    assert_eq!(openrouter::inference_path(Wire::OpenAi), "/chat/completions");
+    assert_eq!(openrouter::inference_path(Wire::Anthropic), "/messages");
+    assert_eq!(openrouter::inference_path(Wire::Responses), "/responses");
+
+    let mut capped = chosen();
+    capped.min_discount_pct = Some(40);
+    // Surplus puts the responses surface under the same root as chat
+    // completions, not under the `/anthropic` one, and takes the discount
+    // prefix in the same leading position.
+    assert_eq!(
+        surplus::inference_path(&chosen(), Wire::Responses),
+        "/v1/responses"
+    );
+    assert_eq!(
+        surplus::inference_path(&capped, Wire::Responses),
+        "/min40/v1/responses"
+    );
 }
 
 /// The upstream's own backoff is read when it gives one, and only in the form
@@ -486,26 +587,31 @@ async fn a_direct_provider_serves_the_openai_surface() {
     assert_eq!(echoed["sent"]["model"], "labs-leanstral-1-5");
 }
 
-/// There is no Anthropic surface here, so the request is declined before the
-/// round trip. The failover loop reads that as this rung's failure and takes
-/// the next one.
+/// Only the chat-completions surface exists here, so a request on either other
+/// wire is declined before the round trip. The failover loop reads that as this
+/// rung's failure and takes the next one.
+///
+/// The declined surface is named in the error rather than assumed: a caller
+/// told "mistral does not serve the Anthropic Messages API" when they posted to
+/// `/v1/responses` would go looking in the wrong place.
 #[tokio::test]
-async fn a_direct_provider_declines_the_anthropic_surface() {
+async fn a_direct_provider_declines_every_surface_it_does_not_publish() {
     let client = mistral_client(&upstream().await);
 
-    match client
-        .infer(
-            &scribe_rung(),
-            Wire::Anthropic,
-            &serde_json::json!({ "messages": [] }),
-        )
-        .await
-    {
-        Err(Error::UnsupportedWire { provider, wire }) => {
-            assert_eq!(provider, "mistral");
-            assert_eq!(wire, "Anthropic Messages");
+    for (declined, expected) in [
+        (Wire::Anthropic, "Anthropic Messages"),
+        (Wire::Responses, "OpenAI Responses"),
+    ] {
+        match client
+            .infer(&scribe_rung(), declined, &serde_json::json!({ "input": "" }))
+            .await
+        {
+            Err(Error::UnsupportedWire { provider, wire }) => {
+                assert_eq!(provider, "mistral");
+                assert_eq!(wire, expected);
+            }
+            other => panic!("expected UnsupportedWire for {declined:?}, got {other:?}"),
         }
-        other => panic!("expected UnsupportedWire, got {other:?}"),
     }
 }
 
