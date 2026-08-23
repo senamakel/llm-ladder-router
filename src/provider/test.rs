@@ -742,3 +742,17 @@ fn only_the_marketplaces_are_polled_for_market_data() {
         assert!(client.is_marketplace());
     }
 }
+
+#[test]
+fn only_an_explicit_true_counts_as_a_streaming_request() {
+    use crate::provider::types::is_streaming;
+
+    assert!(is_streaming(&serde_json::json!({ "stream": true })));
+    // A missing, false, or non-boolean `stream` is every surface's own
+    // default, and reading it as streaming would refuse a Surplus rung that
+    // can serve the request perfectly well.
+    assert!(!is_streaming(&serde_json::json!({ "stream": false })));
+    assert!(!is_streaming(&serde_json::json!({ "stream": "true" })));
+    assert!(!is_streaming(&serde_json::json!({})));
+    assert!(!is_streaming(&serde_json::json!(42)));
+}

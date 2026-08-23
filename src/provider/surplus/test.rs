@@ -210,6 +210,23 @@ fn a_body_with_nothing_to_fold_is_untouched() {
 }
 
 #[test]
+fn a_streaming_responses_request_is_refused_and_everything_else_is_served() {
+    // The one refusal: Surplus's responses stream stops before
+    // `response.output_item.done`, so a client reading it sees an empty turn.
+    assert!(!serves(Wire::Responses, true));
+
+    // Non-streaming responses is complete, and the other two surfaces are
+    // unaffected either way - refusing more than the broken case would strand
+    // traffic Surplus serves perfectly well.
+    assert!(serves(Wire::Responses, false));
+    for wire in [Wire::OpenAi, Wire::Anthropic] {
+        for streaming in [true, false] {
+            assert!(serves(wire, streaming), "{wire:?} streaming={streaming}");
+        }
+    }
+}
+
+#[test]
 fn a_non_object_body_is_left_alone() {
     let mut body = serde_json::json!(42);
     apply_routing(&mut body, &chosen(Some(95)));
