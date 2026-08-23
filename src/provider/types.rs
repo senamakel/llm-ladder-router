@@ -91,13 +91,21 @@ pub enum Disposition {
 /// - **The caller always wins.** A body that already carries `reasoning_effort`
 ///   or `reasoning` is left alone, so a request asking for a shallow answer is
 ///   not silently made expensive by the ladder it happened to select.
-/// - **Only on the `OpenAI` surface.** Anthropic spells this as a `thinking`
-///   block with a token budget, and inventing one from an effort word would be
-///   the router translating between dialects rather than relaying.
+/// - **Only on the two `OpenAI` surfaces.** Anthropic spells this as a
+///   `thinking` block with a token budget, and inventing one from an effort word
+///   would be the router translating between dialects rather than relaying.
 /// - **Nothing is inserted when no effort was declared**, so every ladder that
 ///   predates this field behaves exactly as it did.
+///
+/// The two `OpenAI` surfaces spell the same idea differently, and each is given
+/// its own spelling rather than one being sent to both: chat completions take a
+/// top-level `reasoning_effort` string, while responses take a `reasoning`
+/// object with an `effort` member. Sending the chat spelling to `/responses`
+/// puts an unknown top-level key in the body, which is the sort of thing an
+/// upstream is entitled to reject — and the depth the ladder paid for would
+/// silently not be bought.
 pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wire: Wire) {
-    if wire != Wire::OpenAi {
+    if wire == Wire::Anthropic {
         return;
     }
     let Some(effort) = chosen.reasoning_effort.as_ref() else {
@@ -109,7 +117,17 @@ pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wir
     if object.contains_key("reasoning_effort") || object.contains_key("reasoning") {
         return;
     }
-    object.insert("reasoning_effort".to_string(), effort.clone().into());
+    match wire {
+        Wire::Responses => {
+            object.insert(
+                "reasoning".to_string(),
+                serde_json::json!({ "effort": effort.clone() }),
+            );
+        }
+        _ => {
+            object.insert("reasoning_effort".to_string(), effort.clone().into());
+        }
+    }
 }
 
 /// Classifies an upstream response body by the marketplace-independent rules.
