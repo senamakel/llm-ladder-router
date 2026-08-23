@@ -15,8 +15,8 @@ use super::{Disposition, Wire};
 
 /// The inference path, relative to the base URL.
 ///
-/// Only the `OpenAI`-compatible surface exists; an Anthropic-wire request is
-/// refused before it is sent rather than translated. See [`serves`].
+/// Only the `OpenAI` chat-completions surface exists; a request on any other
+/// wire is refused before it is sent rather than translated. See [`serves`].
 #[must_use]
 pub fn inference_path() -> &'static str {
     "/v1/chat/completions"
@@ -24,10 +24,11 @@ pub fn inference_path() -> &'static str {
 
 /// Whether this provider serves a wire format at all.
 ///
-/// Mistral publishes no Anthropic Messages surface. Relaying an Anthropic body
-/// to the chat-completions endpoint would be a 400 the caller cannot act on and
-/// a round trip nobody needed, so the rung declines instead — which the
-/// failover loop treats as this rung's failure and takes the next one.
+/// Mistral publishes neither an Anthropic Messages surface nor an `OpenAI`
+/// Responses one — `/v1/responses` answers 404. Relaying either body to the
+/// chat-completions endpoint would be a 400 the caller cannot act on and a
+/// round trip nobody needed, so the rung declines instead — which the failover
+/// loop treats as this rung's failure and takes the next one.
 #[must_use]
 pub fn serves(wire: Wire) -> bool {
     wire == Wire::OpenAi

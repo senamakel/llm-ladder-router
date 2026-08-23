@@ -140,6 +140,11 @@ pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
         (Wire::OpenAi, None) => "/v1/chat/completions".to_string(),
         (Wire::Anthropic, Some(pct)) => format!("/anthropic/min{pct}/v1/messages"),
         (Wire::Anthropic, None) => "/anthropic/v1/messages".to_string(),
+        // The responses surface sits under the same root as chat completions,
+        // not under the `/anthropic` one, and takes the discount prefix in the
+        // same leading position.
+        (Wire::Responses, Some(pct)) => format!("/min{pct}/v1/responses"),
+        (Wire::Responses, None) => "/v1/responses".to_string(),
     }
 }
 
