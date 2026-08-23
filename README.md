@@ -1,7 +1,7 @@
 # LLM Ladder Router
 
 Budget-aware routing across LLM marketplace tiers, behind an OpenAI- and
-Anthropic-compatible proxy.
+Anthropic-compatible proxy — chat completions, responses, and messages.
 
 A **ladder** is a set of **rungs**. Each rung names a marketplace, a model, the
 most it may pay per million tokens, and what that model is *worth* — its
@@ -99,14 +99,21 @@ roots are compiled in.
 | Path | Surface |
 | --- | --- |
 | `POST /v1/chat/completions` | OpenAI chat completions |
+| `POST /v1/responses` | OpenAI responses |
 | `POST /v1/messages` | Anthropic Messages |
 | `GET /v1/models` | the configured ladders, listed as models |
 | `GET /healthz` | liveness |
 
-Both marketplaces serve both formats natively, so requests are **relayed, not
-translated** — an Anthropic request reaches an Anthropic endpoint unchanged and
-its response comes back unchanged. Parameters this router does not model pass
-through untouched.
+Both marketplaces serve all three formats natively, so requests are **relayed,
+not translated** — an Anthropic request reaches an Anthropic endpoint unchanged
+and its response comes back unchanged. Parameters this router does not model
+pass through untouched.
+
+Responses is its own surface rather than a flavour of chat completions: the
+request names its prompt in `input` rather than `messages`, the reply is a
+`response` object rather than a `chat.completion`, and reasoning depth is
+spelled differently in each. It is also the only surface some agent harnesses
+speak — anything built on `codex` posts to `/responses` and nothing else.
 
 The `model` field names the **ladder** (`flash`, `reasoning`, `max-reasoning`,
 `scribe`), not a model.
@@ -189,10 +196,16 @@ reasoning_effort = "high"       # every rung, unless it says otherwise
 Three rules hold. **The caller always wins** — a body already carrying
 `reasoning_effort` or `reasoning` is left alone, so a request asking for a
 shallow answer is not made expensive by the ladder it selected. **Only on the
-OpenAI surface**, since Anthropic spells depth as a `thinking` token budget and
-inventing one from an effort word would be translating rather than relaying.
+two OpenAI surfaces**, since Anthropic spells depth as a `thinking` token budget
+and inventing one from an effort word would be translating rather than relaying.
 And a ladder that declares nothing inserts nothing, so every ladder written
 before this field behaves exactly as it did.
+
+The two OpenAI surfaces spell the same idea differently, and each gets its own
+spelling: chat completions take a top-level `reasoning_effort` string, responses
+take a `reasoning` object with an `effort` member. Sending the chat spelling to
+`/responses` would leave an unknown top-level key in the body and buy none of
+the depth the ladder asked for.
 
 The shipped `max-reasoning` ladder is the intended use: higher ceilings than
 `reasoning`, and no rung below a reasoning model — a ladder whose last rung is a
@@ -294,8 +307,10 @@ name = "scribe"
 ```
 
 A ladder of one rung is how this router says "this model or nothing". Mistral
-serves only the OpenAI surface, so an Anthropic-wire request to such a rung is
-declined before it is sent rather than translated.
+serves only the OpenAI chat-completions surface — it publishes neither
+`/v1/messages` nor `/v1/responses` — so a request on either of those wires is
+declined before it is sent rather than translated, and the error names the
+surface that was declined.
 
 ## Marketplaces
 

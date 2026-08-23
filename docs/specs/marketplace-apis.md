@@ -32,6 +32,10 @@ slugs (`deepseek/deepseek-v4-flash`).
   **USD per Mtok**. This is enforced: an unsatisfiable cap returns
   **404 `No endpoints found that satisfy the max price for this request`**.
   Sub-provider preference is `provider.order` plus `allow_fallbacks: true`.
+- `POST /responses` serves the OpenAI Responses API natively, taking the same
+  `provider` object as `/chat/completions`. Reasoning depth is a `reasoning`
+  object with an `effort` member, not the top-level `reasoning_effort` string
+  that surface takes. Verified live 2026-08-23.
 
 `provider.only` is deliberately unused: an exclusive pin has been observed to
 leave requests hanging while idle sub-providers sat unused.
@@ -52,6 +56,11 @@ slugs (`glm-5.2`). OpenAI-compatible.
   plus `stats` and `recent_usage`. Spendable is `min(balance, allowance)`.
 - `POST /v1/chat/completions`, and `POST /min{N}/v1/chat/completions` for
   minimum-discount routing.
+- `POST /v1/responses`, and `POST /min{N}/v1/responses`, serving the OpenAI
+  Responses API. Note the prefix position: this surface sits under the same root
+  as chat completions with the prefix leading, **not** under the `/anthropic`
+  root the Messages surface uses. `POST /responses` (no `/v1`) is a 404.
+  Verified live 2026-08-23.
 
 Response headers worth capturing: `x-si-served-by`, `x-si-marketplace-status`
 (`served` / `filtered`), `x-si-marketplace-attempts`, `x-si-provider-family`,
