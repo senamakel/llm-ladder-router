@@ -472,7 +472,10 @@ fn a_callers_own_depth_survives_on_the_responses_surface() {
 /// format, so no field is lost translating between them.
 #[test]
 fn each_surface_maps_to_its_own_native_path() {
-    assert_eq!(openrouter::inference_path(Wire::OpenAi), "/chat/completions");
+    assert_eq!(
+        openrouter::inference_path(Wire::OpenAi),
+        "/chat/completions"
+    );
     assert_eq!(openrouter::inference_path(Wire::Anthropic), "/messages");
     assert_eq!(openrouter::inference_path(Wire::Responses), "/responses");
 
@@ -603,7 +606,11 @@ async fn a_direct_provider_declines_every_surface_it_does_not_publish() {
         (Wire::Responses, "OpenAI Responses"),
     ] {
         match client
-            .infer(&scribe_rung(), declined, &serde_json::json!({ "input": "" }))
+            .infer(
+                &scribe_rung(),
+                declined,
+                &serde_json::json!({ "input": "" }),
+            )
             .await
         {
             Err(Error::UnsupportedWire { provider, wire }) => {
