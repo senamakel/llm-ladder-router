@@ -104,6 +104,28 @@ upstream, not the seller that was matched. Local order-book filtering is
 therefore a sound way to *skip* a rung that clearly cannot fit, but it is not a
 guarantee about what the request will cost — only `/min{N}/` is.
 
+### The `developer` role is rejected on every surface
+
+Surplus's request schema predates the `developer` role and 400s on it:
+
+```text
+Failed to deserialize the JSON body into the target type:
+  messages[1].role: unknown variant `developer`,
+  expected one of `system`, `user`, `assistant`, `tool`
+```
+
+Verified 2026-08-23 against `/v1/chat/completions` and `/v1/responses` alike —
+the responses surface converts internally and reports the same complaint
+against `messages`. OpenRouter accepts the role on both.
+
+This matters because a 400 is a caller error and does **not** advance the
+ladder, so an unfolded `developer` message is not a step down to the next rung,
+it is the request failing outright. The `codex` harness opens every turn with
+one, so Codex sessions could not reach a Surplus rung at all. `surplus::
+apply_routing` therefore rewrites `developer` to `system` in both `messages`
+and `input` before dispatch. It is the one place the router edits a caller's
+content, and `developer` is `system` renamed, so nothing is lost.
+
 ## Rung-advance signals
 
 Advance to the next rung on these; everything else is a caller error and is
