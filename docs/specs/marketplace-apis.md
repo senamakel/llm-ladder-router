@@ -126,6 +126,30 @@ one, so Codex sessions could not reach a Surplus rung at all.
 `messages` and `input` before dispatch. It is the one place the router edits a
 caller's content, and `developer` is `system` renamed, so nothing is lost.
 
+### The responses event stream is truncated
+
+Surplus's `/v1/responses` stream emits four event types and stops:
+
+```text
+response.created
+response.output_item.added
+response.output_text.delta
+response.completed        # its `response` carries no `output` array
+```
+
+There is no `response.output_item.done`. OpenRouter emits all nine. Verified
+2026-08-23; the non-streaming form of the same request is complete, so this is
+the stream alone.
+
+An agent client assembles its turn from the finished items, so it reads a turn
+with no output and ends silently — the model's answer arrives in the deltas and
+is discarded. That is worse than an error, because the run looks like it
+completed and produced nothing. Codex speaks only this surface, so the
+`serves(wire, streaming)` check in `surplus::mod` refuses a streaming responses
+request before the round trip and lets the ladder step down to OpenRouter,
+whose stream is complete. Every other surface, and the non-streaming form of
+this one, is served as before.
+
 ## Rung-advance signals
 
 Advance to the next rung on these; everything else is a caller error and is
