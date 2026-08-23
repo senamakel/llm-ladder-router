@@ -152,7 +152,7 @@ pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
 ///
 /// The model is rewritten - the ceiling travels in the path, not the body -
 /// and the `developer` role is folded back to `system`; see
-/// [`fold_developer_role`] for why that one exception exists.
+/// `fold_developer_role` for why that one exception exists.
 pub fn apply_routing(body: &mut serde_json::Value, chosen: &Chosen) {
     if let Some(object) = body.as_object_mut() {
         object.insert("model".to_string(), chosen.model.clone().into());
