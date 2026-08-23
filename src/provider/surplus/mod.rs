@@ -178,7 +178,7 @@ pub fn apply_routing(body: &mut serde_json::Value, chosen: &Chosen) {
 /// one either, because a 400 is a statement about the request and
 /// [`super::types::classify_status`] deliberately hands those straight back.
 /// The role is also not a real distinction here: `developer` is `system`
-/// renamed, and Surplus's own schema still spells it the old way. OpenRouter
+/// renamed, and Surplus's own schema still spells it the old way. `OpenRouter`
 /// accepts either, so nothing else needs this.
 ///
 /// Both the chat shape (`messages`) and the responses shape (`input`) are
