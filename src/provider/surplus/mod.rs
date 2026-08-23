@@ -189,7 +189,10 @@ fn fold_developer_role(body: &mut serde_json::Value) {
         return;
     };
     for key in ["messages", "input"] {
-        let Some(items) = object.get_mut(key).and_then(serde_json::Value::as_array_mut) else {
+        let Some(items) = object
+            .get_mut(key)
+            .and_then(serde_json::Value::as_array_mut)
+        else {
             continue;
         };
         for item in items {
