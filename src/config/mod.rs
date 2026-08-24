@@ -9,7 +9,7 @@ mod types;
 
 pub use types::{
     Config, CostBasis, Credits, Ladder, Pricing, Provider, ProviderKind, RateLimits, Rung, Server,
-    Sessions,
+    Sessions, Surface,
 };
 
 use crate::error::{Error, Result};
@@ -56,6 +56,8 @@ impl Config {
     ///   positive and finite.
     /// - [`Error::UnpriceableCeiling`] if a ceiling is set on a direct provider
     ///   or one of its rungs, where no order book exists to check it against.
+    /// - [`Error::UncappableSurface`] if a ceiling is set on a rung of an
+    ///   embeddings ladder, where no marketplace publishes a price filter.
     /// - [`Error::Empty`] if a declared `reasoning_effort` is blank, which would
     ///   otherwise reach an upstream as an empty string and be rejected there.
     fn validate(&self) -> Result<()> {
@@ -131,6 +133,18 @@ impl Config {
                         provider: rung.provider.clone(),
                     });
                 }
+                // A ceiling on the embeddings surface has nothing to bind
+                // against: no marketplace publishes a price filter for it. The
+                // provider's own ceiling is dropped silently by
+                // [`Ladder::cap_for`] because it was written for the chat
+                // ladders and inherited by accident, but one written here was
+                // meant, and a limit that never limits anything is worth
+                // refusing where it is still a typo.
+                if !ladder.surface.is_cappable() && rung.max_cost_per_1m.is_some() {
+                    return Err(Error::UncappableSurface {
+                        field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+                    });
+                }
             }
         }
 
@@ -143,13 +157,16 @@ impl Config {
         self.ladders.iter().find(|ladder| ladder.name == name)
     }
 
-    /// The ceiling that applies to a rung once its provider's ceiling is folded
-    /// in, in USD per million tokens.
+    /// The ceiling that applies to a rung of a ladder once its provider's
+    /// ceiling is folded in, in USD per million tokens.
     ///
-    /// Returns `None` when neither the rung nor its provider sets one.
+    /// Returns `None` when neither the rung nor its provider sets one, and
+    /// always on a surface that cannot enforce a ceiling — see
+    /// [`Ladder::cap_for`].
     #[must_use]
-    pub fn cap_for(&self, rung: &Rung) -> Option<f64> {
-        rung.effective_cap(
+    pub fn cap_for(&self, ladder: &Ladder, rung: &Rung) -> Option<f64> {
+        ladder.cap_for(
+            rung,
             self.providers
                 .get(&rung.provider)
                 .and_then(|provider| provider.max_cost_per_1m),
