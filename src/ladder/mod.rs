@@ -137,7 +137,7 @@ fn honor(
     if rung.provider != pin.provider || rung.model != pin.model {
         return Err(PinRejected::RungGone);
     }
-    if !same_cap(config.cap_for(rung), pin.cap_per_1m) {
+    if !same_cap(config.cap_for(ladder, rung), pin.cap_per_1m) {
         return Err(PinRejected::CeilingChanged);
     }
     if exclude.contains(&pin.rung) {
@@ -208,7 +208,7 @@ fn admit(
         });
     }
 
-    let cap = config.cap_for(rung);
+    let cap = config.cap_for(ladder, rung);
     let Some(model_prices) = prices.get(&rung.provider, &rung.model) else {
         // Without a ceiling there is nothing to check prices against, so a
         // missing snapshot is not a reason to refuse to try.

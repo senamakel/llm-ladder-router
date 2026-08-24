@@ -28,7 +28,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tokio::sync::RwLock;
 
-use crate::config::Config;
+use crate::config::{Config, Surface};
 use crate::credits::CreditState;
 use crate::error::{Error, Result};
 use crate::ladder::{self, Chosen, Skipped};
@@ -103,6 +103,7 @@ pub fn build_with_credentials(
         // rather than translated, so no field is lost in either direction.
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/messages", post(messages))
+        .route("/v1/embeddings", post(embeddings))
         .route("/v1/models", get(list_models))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(state.clone());
@@ -179,6 +180,9 @@ async fn list_models(AxumState(state): AxumState<State>) -> Json<serde_json::Val
                 "object": "model",
                 "owned_by": "llm-ladder-router",
                 "rungs": ladder.rungs.len(),
+                // So a client discovering ladders can tell which endpoint each
+                // one answers on without reading the router's configuration.
+                "surface": surface_name(ladder.surface),
             })
         })
         .collect();
@@ -201,6 +205,19 @@ async fn messages(
     Json(body): Json<serde_json::Value>,
 ) -> Response {
     route(state, &headers, body, Wire::Anthropic).await
+}
+
+/// The `OpenAI`-compatible embeddings entry point.
+///
+/// The same ladder machinery, on a body the router does not otherwise look
+/// into: a rung is chosen and failed over exactly as it is for a chat request,
+/// and the caller's `input` is relayed untouched.
+async fn embeddings(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    route(state, &headers, body, Wire::Embeddings).await
 }
 
 /// Checks the caller's key against the configured one.
@@ -227,6 +244,23 @@ fn authorized(state: &State, headers: &HeaderMap) -> bool {
     // configured shared secret over a connection the operator controls, and
     // both candidate values are already in memory.
     bearer == Some(expected.as_str()) || x_api_key == Some(expected.as_str())
+}
+
+/// Whether a ladder declared for one surface may answer a request on a given
+/// wire format.
+fn serves(surface: Surface, wire: Wire) -> bool {
+    match surface {
+        Surface::Chat => matches!(wire, Wire::OpenAi | Wire::Anthropic),
+        Surface::Embeddings => wire == Wire::Embeddings,
+    }
+}
+
+/// What to call a surface in a message to a caller, and in `/v1/models`.
+fn surface_name(surface: Surface) -> &'static str {
+    match surface {
+        Surface::Chat => "chat",
+        Surface::Embeddings => "embeddings",
+    }
 }
 
 /// Walks a ladder for one request on one wire format.
@@ -264,6 +298,22 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
             &[],
         );
     };
+
+    if !serves(ladder_config.surface, wire) {
+        // An embedding model cannot answer a chat request and a chat model
+        // cannot answer an embeddings one, so a mismatch is a 400 rather than a
+        // ladder walk that fails identically at every rung and bills for the
+        // attempts.
+        return problem(
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "ladder {name} serves the {} surface, not {}",
+                surface_name(ladder_config.surface),
+                wire.name()
+            ),
+            &[],
+        );
+    }
 
     let session = session_of(&state, headers, &body);
     walk(&state, ladder_config, &name, session, body, wire).await
