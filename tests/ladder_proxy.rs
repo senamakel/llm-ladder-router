@@ -154,7 +154,7 @@ async fn surplus_embeddings(
                 "usage": { "prompt_tokens": 3, "total_tokens": 3 },
             })),
         ),
-        behavior => respond(behavior),
+        behavior @ Behavior::Fail(..) => respond(behavior),
     }
 }
 
