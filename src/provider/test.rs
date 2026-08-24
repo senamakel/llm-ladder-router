@@ -197,6 +197,13 @@ async fn upstream() -> String {
                 axum::Json(serde_json::json!({ "sent": body.0 }))
             }),
         )
+        // Mistral's embeddings surface, echoing the body for the same reason.
+        .route(
+            "/v1/embeddings",
+            post(|body: axum::Json<serde_json::Value>| async move {
+                axum::Json(serde_json::json!({ "sent": body.0 }))
+            }),
+        )
         .route(
             "/messages",
             post(|headers: axum::http::HeaderMap| async move {
@@ -484,6 +491,28 @@ async fn a_direct_provider_serves_the_openai_surface() {
     // The ladder name the caller sent is replaced by the rung's model, and the
     // request went to Mistral's own path rather than a marketplace's.
     assert_eq!(echoed["sent"]["model"], "labs-leanstral-1-5");
+}
+
+/// A direct provider publishes embeddings as well as chat, and the two are
+/// different endpoints rather than different bodies at one endpoint.
+#[tokio::test]
+async fn a_direct_provider_serves_the_embeddings_surface() {
+    let client = mistral_client(&upstream().await);
+
+    let dispatched = client
+        .infer(
+            &scribe_rung(),
+            Wire::Embeddings,
+            &serde_json::json!({ "model": "scribe", "input": "hello" }),
+        )
+        .await
+        .unwrap();
+
+    assert!(dispatched.status.is_success());
+    let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
+    assert_eq!(echoed["sent"]["model"], "labs-leanstral-1-5");
+    // The caller's payload is relayed untouched; only the model is rewritten.
+    assert_eq!(echoed["sent"]["input"], "hello");
 }
 
 /// There is no Anthropic surface here, so the request is declined before the

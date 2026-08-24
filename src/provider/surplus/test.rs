@@ -247,8 +247,14 @@ fn a_media_unit_price_stands_in_for_absent_token_prices() {
     // 1000 micro-USD per Mtok is $0.001 per Mtok, and the direct price it is
     // quoted against is 20000, or $0.02.
     let cheapest = &prices.offers[0];
-    assert!((cheapest.completion_per_1m - 0.001).abs() < 1e-9, "{cheapest:?}");
-    assert!((cheapest.prompt_per_1m - 0.001).abs() < 1e-9, "{cheapest:?}");
+    assert!(
+        (cheapest.completion_per_1m - 0.001).abs() < 1e-9,
+        "{cheapest:?}"
+    );
+    assert!(
+        (cheapest.prompt_per_1m - 0.001).abs() < 1e-9,
+        "{cheapest:?}"
+    );
     assert!((cheapest.direct_completion_per_1m.unwrap() - 0.02).abs() < 1e-9);
 
     // The floor is a real number rather than the zero the token fields carry.

@@ -119,7 +119,10 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
             let completion = offer.per_1m(offer.price_output_per_1m, quoted);
             let direct = offer.per_1m(offer.direct_output_per_1m, offer.direct_media_unit_price);
             Offer {
-                provider: offer.provider.clone().unwrap_or_else(|| "unknown".to_string()),
+                provider: offer
+                    .provider
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
                 // Surplus does not expose a steering slug per seller, and its
                 // `provider` allow-list names upstream families rather than
                 // individual offers, so there is nothing to steer with.

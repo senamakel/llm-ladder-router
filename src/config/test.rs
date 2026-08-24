@@ -678,7 +678,10 @@ fn a_ladder_declares_the_surface_it_answers_on() {
     )
     .unwrap();
 
-    assert_eq!(config.ladder("vectors").unwrap().surface, Surface::Embeddings);
+    assert_eq!(
+        config.ladder("vectors").unwrap().surface,
+        Surface::Embeddings
+    );
     // Unset means chat, so every ladder written before embeddings existed keeps
     // behaving exactly as it did.
     assert_eq!(config.ladder("prose").unwrap().surface, Surface::Chat);
