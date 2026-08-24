@@ -34,10 +34,59 @@ struct MarketOffer {
     /// The undiscounted price the offer is quoted against, micro-USD per
     /// million tokens.
     direct_output_per_1m: Option<f64>,
+    /// Micro-USD per [`MarketOffer::media_unit`], for a model that is not
+    /// billed per prompt and completion token.
+    media_unit_price: Option<f64>,
+    /// The undiscounted counterpart of [`MarketOffer::media_unit_price`].
+    direct_media_unit_price: Option<f64>,
+    /// What a media unit is. Only `1M tokens` is read; see
+    /// [`MarketOffer::per_1m`].
+    media_unit: Option<String>,
     #[serde(default)]
     available: bool,
     #[serde(default)]
     healthy: bool,
+}
+
+/// The media unit that is denominated in the same thing the rest of the table
+/// is, and so the only one whose price can be compared with a token price.
+const MEDIA_UNIT_PER_1M: &str = "1M tokens";
+
+impl MarketOffer {
+    /// One of this offer's prices, in micro-USD per million tokens, falling
+    /// back to the media-unit price when the per-token fields are zero.
+    ///
+    /// An embedding model is billed per unit of *input* rather than per prompt
+    /// and completion token, so Surplus quotes it in `media_unit_price` and
+    /// leaves `price_input_per_1m` and `price_output_per_1m` at zero — measured
+    /// across all 175 offers on `venice-embed-1`. Read naively that is a market
+    /// full of free sellers, which would give an embeddings rung a floor of
+    /// zero and rank it ahead of every honestly-priced rung it competes with.
+    ///
+    /// The unit is checked rather than assumed: the same field prices an image
+    /// model per image, and a per-image price compared against a per-token one
+    /// is a worse answer than no price at all. An offer that publishes neither
+    /// form is left at zero, exactly as a chat offer with missing fields is
+    /// today — the marketplace does carry genuinely free models.
+    ///
+    /// The caller decides what `media` is, which is how a seller quoting no
+    /// price of its own falls back to the undiscounted one rather than to zero:
+    /// five of the 175 live offers on `venice-embed-1` are in that state, and
+    /// one usable seller reading as free is enough to make the whole rung's
+    /// floor zero and rank it ahead of every priced rung it competes with. The
+    /// direct price is the honest reading of "this seller published no
+    /// discount", and it errs upward, which is the safe direction for a number
+    /// a ceiling is compared against.
+    fn per_1m(&self, per_token: Option<f64>, media: Option<f64>) -> f64 {
+        let per_token = per_token.unwrap_or(0.0);
+        if per_token > 0.0 {
+            return per_token;
+        }
+        if self.media_unit.as_deref() == Some(MEDIA_UNIT_PER_1M) {
+            return media.unwrap_or(0.0);
+        }
+        per_token
+    }
 }
 
 /// `GET /v1/buyer/me`.
@@ -64,16 +113,30 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
     let offers = book
         .offers
         .into_iter()
-        .map(|offer| Offer {
-            provider: offer.provider.unwrap_or_else(|| "unknown".to_string()),
-            // Surplus does not expose a steering slug per seller, and its
-            // `provider` allow-list names upstream families rather than
-            // individual offers, so there is nothing to steer with.
-            tag: None,
-            prompt_per_1m: offer.price_input_per_1m.unwrap_or(0.0) / MICRO_USD,
-            completion_per_1m: offer.price_output_per_1m.unwrap_or(0.0) / MICRO_USD,
-            direct_completion_per_1m: offer.direct_output_per_1m.map(|direct| direct / MICRO_USD),
-            usable: offer.available && offer.healthy,
+        .map(|offer| {
+            let quoted = offer.media_unit_price.or(offer.direct_media_unit_price);
+            let prompt = offer.per_1m(offer.price_input_per_1m, quoted);
+            let completion = offer.per_1m(offer.price_output_per_1m, quoted);
+            let direct = offer.per_1m(offer.direct_output_per_1m, offer.direct_media_unit_price);
+            Offer {
+                provider: offer
+                    .provider
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                // Surplus does not expose a steering slug per seller, and its
+                // `provider` allow-list names upstream families rather than
+                // individual offers, so there is nothing to steer with.
+                tag: None,
+                prompt_per_1m: prompt / MICRO_USD,
+                completion_per_1m: completion / MICRO_USD,
+                // Kept as `None` when nothing was published, so
+                // `discount_floor_pct` still skips an offer it cannot compute a
+                // ratio against rather than dividing by a zero it invented.
+                direct_completion_per_1m: (offer.direct_output_per_1m.is_some()
+                    || offer.direct_media_unit_price.is_some())
+                .then_some(direct / MICRO_USD),
+                usable: offer.available && offer.healthy,
+            }
         })
         .collect();
 
@@ -153,6 +216,15 @@ pub fn serves(wire: Wire, streaming: bool) -> bool {
 /// place on each surface: `/min{N}/v1/chat/completions` for `OpenAI`, but
 /// `/anthropic/min{N}/v1/messages` for Anthropic. Both were verified against
 /// the live API; the other orderings 404.
+///
+/// Embeddings have no discounted form at all. `/v1/embeddings` serves, and
+/// every prefixed spelling of it — `/min{N}/v1/embeddings`,
+/// `/v1/min{N}/embeddings`, `/embeddings/min{N}` — 404s, measured against the
+/// live API on 2026-08-24 while `/min50/v1/chat/completions` answered on the
+/// same run. That is why an embeddings ladder carries no ceiling: there is
+/// nothing to express one with, and [`crate::config::Surface::is_cappable`]
+/// says so at load time rather than letting a number sit in the file looking
+/// like a limit.
 #[must_use]
 pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
     let discount = match chosen.min_discount_pct {
@@ -169,6 +241,8 @@ pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
         // same leading position.
         (Wire::Responses, Some(pct)) => format!("/min{pct}/v1/responses"),
         (Wire::Responses, None) => "/v1/responses".to_string(),
+        // Embeddings have no discounted spelling at all; see above.
+        (Wire::Embeddings, _) => "/v1/embeddings".to_string(),
     }
 }
 

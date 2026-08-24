@@ -121,7 +121,7 @@ fn the_provider_ceiling_binds_a_rung_that_asked_for_more() {
     let ladder = config.ladder("only").unwrap();
 
     // The rung asked for 5.00 but the provider caps everything at 0.20.
-    assert_eq!(config.cap_for(&ladder.rungs[0]), Some(0.20));
+    assert_eq!(config.cap_for(ladder, &ladder.rungs[0]), Some(0.20));
 
     let mut prices = PriceTable::new();
     prices.insert(

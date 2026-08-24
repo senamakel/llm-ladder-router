@@ -4,10 +4,16 @@ use crate::ladder::Chosen;
 
 /// Which request/response format a caller is speaking.
 ///
-/// Both marketplaces serve all three formats natively, so the router relays
+/// Both marketplaces serve every chat format natively, so the router relays
 /// rather than translating: an Anthropic request reaches an Anthropic endpoint
 /// unchanged, and its response comes back unchanged. Translating between them
 /// would lose fields on every round trip.
+///
+/// Embeddings stand apart from the chat formats rather than being a variation
+/// on one of them: the request carries `input` instead of `messages`, the
+/// response carries vectors instead of choices, and no provider serves them on
+/// the Anthropic surface. Which providers serve which format is each dialect
+/// module's `serves`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wire {
     /// `OpenAI` chat completions.
@@ -23,6 +29,8 @@ pub enum Wire {
     /// `/responses` and nothing else, so without this it cannot reach the
     /// router at all.
     Responses,
+    /// `OpenAI` embeddings.
+    Embeddings,
 }
 
 impl Wire {
@@ -33,6 +41,7 @@ impl Wire {
             Self::OpenAi => "OpenAI Chat Completions",
             Self::Anthropic => "Anthropic Messages",
             Self::Responses => "OpenAI Responses",
+            Self::Embeddings => "OpenAI Embeddings",
         }
     }
 }
@@ -91,9 +100,11 @@ pub enum Disposition {
 /// - **The caller always wins.** A body that already carries `reasoning_effort`
 ///   or `reasoning` is left alone, so a request asking for a shallow answer is
 ///   not silently made expensive by the ladder it happened to select.
-/// - **Only on the two `OpenAI` surfaces.** Anthropic spells this as a
-///   `thinking` block with a token budget, and inventing one from an effort word
-///   would be the router translating between dialects rather than relaying.
+/// - **Only on the two `OpenAI` chat surfaces.** Anthropic spells this as a
+///   `thinking` block with a token budget, and inventing one from an effort
+///   word would be the router translating between dialects rather than
+///   relaying. An embedding model does not reason at all, so the field would be
+///   a 400 from a request that was otherwise fine.
 /// - **Nothing is inserted when no effort was declared**, so every ladder that
 ///   predates this field behaves exactly as it did.
 ///
@@ -105,7 +116,7 @@ pub enum Disposition {
 /// upstream is entitled to reject — and the depth the ladder paid for would
 /// silently not be bought.
 pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wire: Wire) {
-    if wire == Wire::Anthropic {
+    if matches!(wire, Wire::Anthropic | Wire::Embeddings) {
         return;
     }
     let Some(effort) = chosen.reasoning_effort.as_ref() else {

@@ -131,9 +131,9 @@ fn the_tighter_of_the_rung_and_provider_ceilings_applies() {
     let flash = config.ladder("flash").unwrap();
 
     // Rung 0.15 against provider 0.50: the rung is tighter.
-    assert_eq!(config.cap_for(&flash.rungs[0]), Some(0.15));
+    assert_eq!(config.cap_for(flash, &flash.rungs[0]), Some(0.15));
     // Rung 0.30 with no provider ceiling on OpenRouter.
-    assert_eq!(config.cap_for(&flash.rungs[1]), Some(0.30));
+    assert_eq!(config.cap_for(flash, &flash.rungs[1]), Some(0.30));
 }
 
 #[test]
@@ -154,8 +154,8 @@ fn a_rung_without_a_ceiling_inherits_the_providers() {
         "#,
     )
     .unwrap();
-    let rung = &config.ladder("only").unwrap().rungs[0];
-    assert_eq!(config.cap_for(rung), Some(0.40));
+    let only = config.ladder("only").unwrap();
+    assert_eq!(config.cap_for(only, &only.rungs[0]), Some(0.40));
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn a_rung_with_neither_ceiling_is_uncapped() {
     let config = Config::parse(EXAMPLE).unwrap();
     let reasoning = config.ladder("reasoning").unwrap();
     // Surplus carries a 0.50 provider ceiling, so this rung is not uncapped.
-    assert_eq!(config.cap_for(&reasoning.rungs[0]), Some(0.50));
+    assert_eq!(config.cap_for(reasoning, &reasoning.rungs[0]), Some(0.50));
 
     let uncapped = Config::parse(
         r#"
@@ -180,10 +180,8 @@ fn a_rung_with_neither_ceiling_is_uncapped() {
         "#,
     )
     .unwrap();
-    assert_eq!(
-        uncapped.cap_for(&uncapped.ladder("only").unwrap().rungs[0]),
-        None
-    );
+    let only = uncapped.ladder("only").unwrap();
+    assert_eq!(uncapped.cap_for(only, &only.rungs[0]), None);
 }
 
 #[test]
@@ -365,7 +363,7 @@ fn the_shipped_example_config_is_valid() {
     // ships, and a container that binds loopback answers nobody.
     assert_eq!(config.server.bind, "0.0.0.0:6969");
 
-    // The example is the documentation for the four ladders the router ships
+    // The example is the documentation for the six ladders the router ships
     // with; a change to any of them should be deliberate.
     assert_eq!(
         config
@@ -403,7 +401,7 @@ fn the_shipped_example_config_is_valid() {
     let scribe = config.ladder("scribe").unwrap();
     assert_eq!(scribe.rungs.len(), 1);
     assert_eq!(scribe.rungs[0].model, "labs-leanstral-1-5");
-    assert!(config.cap_for(&scribe.rungs[0]).is_none());
+    assert!(config.cap_for(scribe, &scribe.rungs[0]).is_none());
     assert!(!config.providers["mistral"].kind.is_marketplace());
 
     // Two rungs, one model: the priced one first, the house it comes from
@@ -420,8 +418,16 @@ fn the_shipped_example_config_is_valid() {
             ("venice", "venice-uncensored-1-2"),
         ]
     );
-    assert!(config.cap_for(&uncensored.rungs[1]).is_none());
+    assert!(config.cap_for(uncensored, &uncensored.rungs[1]).is_none());
     assert!(!config.providers["venice"].kind.is_marketplace());
+
+    // The embeddings ladder, on its own surface and deliberately uncapped:
+    // no marketplace publishes a price filter there, so a ceiling would be
+    // refused at load time.
+    let vectors = config.ladder("vectors").unwrap();
+    assert_eq!(vectors.surface, Surface::Embeddings);
+    assert_eq!(vectors.rungs[0].model, "venice-embed-1");
+    assert_eq!(config.cap_for(vectors, &vectors.rungs[0]), None);
 
     let max = config.ladder("max-reasoning").unwrap();
     assert_eq!(
@@ -463,7 +469,7 @@ fn the_shipped_example_config_is_valid() {
     // this ladder was written to pay — and the ladder would step down to a
     // cheaper model while reading as though it had not.
     for rung in &max.rungs {
-        let cap = config.cap_for(rung).unwrap();
+        let cap = config.cap_for(max, rung).unwrap();
         assert!(
             (cap - rung.max_cost_per_1m.unwrap()).abs() < f64::EPSILON,
             "`{}` is clamped to {cap} by its provider's ceiling",
@@ -694,4 +700,106 @@ fn the_shipped_multipliers_keep_each_ladder_about_what_it_is_for() {
         spread <= 2.0,
         "the throughput ladder has grown a {spread}x quality preference"
     );
+}
+
+/// An embeddings ladder is a different surface, not a different price band, and
+/// the router has to know which endpoint it answers on.
+#[test]
+fn a_ladder_declares_the_surface_it_answers_on() {
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "vectors"
+        surface = "embeddings"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-embed-1"
+
+        [[ladders]]
+        name = "prose"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.2"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.ladder("vectors").unwrap().surface,
+        Surface::Embeddings
+    );
+    // Unset means chat, so every ladder written before embeddings existed keeps
+    // behaving exactly as it did.
+    assert_eq!(config.ladder("prose").unwrap().surface, Surface::Chat);
+}
+
+/// No marketplace publishes a price filter for embeddings — Surplus's
+/// `/min{N}/` prefix 404s there — so a ceiling on that surface is a number that
+/// reads like a limit and binds nothing.
+#[test]
+fn rejects_a_ceiling_on_an_embeddings_rung() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "vectors"
+        surface = "embeddings"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-embed-1"
+          max_cost_per_1m = 0.30
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(&error, Error::UncappableSurface { field } if field.contains("vectors")),
+        "{error:?}"
+    );
+}
+
+/// A provider ceiling was written for the chat ladders and is inherited by an
+/// embeddings rung by accident. Dropping it beats skipping every rung for want
+/// of a filter that does not exist.
+#[test]
+fn an_embeddings_rung_does_not_inherit_the_providers_ceiling() {
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+        max_cost_per_1m = 1.00
+
+        [[ladders]]
+        name = "vectors"
+        surface = "embeddings"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-embed-1"
+
+        [[ladders]]
+        name = "prose"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.2"
+        "#,
+    )
+    .unwrap();
+
+    let vectors = config.ladder("vectors").unwrap();
+    assert_eq!(config.cap_for(vectors, &vectors.rungs[0]), None);
+
+    // The same provider ceiling still binds on the chat ladder beside it.
+    let prose = config.ladder("prose").unwrap();
+    assert_eq!(config.cap_for(prose, &prose.rungs[0]), Some(1.00));
 }

@@ -90,6 +90,17 @@ pub enum Error {
         provider: String,
     },
 
+    /// A rung carried a price ceiling on a surface that no marketplace
+    /// filters by price.
+    #[error(
+        "{field} sets a ceiling on the embeddings surface, where no marketplace publishes a \
+         price filter; remove the ceiling"
+    )]
+    UncappableSurface {
+        /// The configuration field that carried the ceiling.
+        field: String,
+    },
+
     /// A direct provider was asked for price or balance data it does not
     /// publish.
     #[error("{provider} is a direct endpoint and publishes no {what}")]

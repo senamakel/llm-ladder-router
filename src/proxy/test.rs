@@ -194,6 +194,31 @@ async fn the_ladders_are_listed_as_models() {
     assert_eq!(body["data"][0]["id"], "flash");
     assert_eq!(body["data"][0]["owned_by"], "llm-ladder-router");
     assert_eq!(body["data"][0]["rungs"], 1);
+    // So a client discovering ladders can tell which endpoint each answers on.
+    assert_eq!(body["data"][0]["surface"], "chat");
+}
+
+/// The guard that keeps a chat ladder off the embeddings endpoint, and an
+/// embeddings ladder off the chat ones. Neither model can answer the other's
+/// request, so the pairing is decided here rather than by an upstream 400 at
+/// every rung in turn.
+#[test]
+fn a_surface_answers_only_its_own_wire_formats() {
+    assert!(serves(Surface::Chat, Wire::OpenAi));
+    assert!(serves(Surface::Chat, Wire::Anthropic));
+    // Responses is a chat surface too: a different request shape for the same
+    // conversation, which the same ladder of chat models can answer.
+    assert!(serves(Surface::Chat, Wire::Responses));
+    assert!(!serves(Surface::Chat, Wire::Embeddings));
+
+    assert!(serves(Surface::Embeddings, Wire::Embeddings));
+    assert!(!serves(Surface::Embeddings, Wire::OpenAi));
+    assert!(!serves(Surface::Embeddings, Wire::Responses));
+    // There is no Anthropic embeddings format to serve.
+    assert!(!serves(Surface::Embeddings, Wire::Anthropic));
+
+    assert_eq!(surface_name(Surface::Chat), "chat");
+    assert_eq!(surface_name(Surface::Embeddings), "embeddings");
 }
 
 /// A loopback Surplus good enough for `serve` to start against.

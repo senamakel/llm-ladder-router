@@ -73,6 +73,31 @@ impl Client {
         &self.name
     }
 
+    /// Whether this provider serves a wire format at all.
+    ///
+    /// Both marketplaces publish every surface; Mistral publishes neither the
+    /// Anthropic Messages one nor the `OpenAI` Responses one, and Venice
+    /// publishes only chat completions. A rung on a provider that does not
+    /// serve the caller's surface declines before the round trip — see
+    /// [`Client::infer`].
+    ///
+    /// The question is asked of the wire format alone, so a refusal that also
+    /// depends on the body — Surplus declining a *streamed* responses request,
+    /// see [`surplus::serves`] — is not answered here.
+    ///
+    /// Answering "yes" is not a claim that the *model* named by the rung suits
+    /// the surface. `OpenRouter` serves `/embeddings` but lists no embedding
+    /// model, so a rung pointing there is a configuration mistake the upstream
+    /// reports, not one this router can see.
+    #[must_use]
+    pub fn serves(&self, wire: Wire) -> bool {
+        match self.provider.kind {
+            ProviderKind::OpenRouter | ProviderKind::Surplus => true,
+            ProviderKind::Mistral => mistral::serves(wire),
+            ProviderKind::Venice => venice::serves(wire),
+        }
+    }
+
     /// Whether this provider's credential was present in the environment.
     #[must_use]
     pub fn has_credential(&self) -> bool {
@@ -159,6 +184,17 @@ impl Client {
         wire: Wire,
         body: &serde_json::Value,
     ) -> Result<Dispatched> {
+        // Refused before the round trip rather than after it, and asked of
+        // every dialect rather than of the one that happens to decline today:
+        // the failover loop reads this as the rung's own failure and moves to
+        // the next.
+        if !self.serves(wire) {
+            return Err(Error::UnsupportedWire {
+                provider: self.name.clone(),
+                wire: wire.api_name().to_string(),
+            });
+        }
+
         let mut body = body.clone();
         // Depth first, then the marketplace's own rewrites: both appliers only
         // add fields, and doing it here rather than inside each dialect keeps
@@ -183,27 +219,10 @@ impl Client {
                 surplus::inference_path(chosen, wire)
             }
             ProviderKind::Mistral => {
-                // Refused before the round trip rather than after it: only the
-                // chat-completions surface exists here, and the failover loop
-                // reads this as the rung's own failure and moves to the next.
-                if !mistral::serves(wire) {
-                    return Err(Error::UnsupportedWire {
-                        provider: self.name.clone(),
-                        wire: wire.api_name().to_string(),
-                    });
-                }
                 mistral::apply_routing(&mut body, chosen);
-                mistral::inference_path().to_string()
+                mistral::inference_path(wire).to_string()
             }
             ProviderKind::Venice => {
-                // Declined before the round trip for the same reason as
-                // Mistral: there is no Anthropic surface here to relay to.
-                if !venice::serves(wire) {
-                    return Err(Error::UnsupportedWire {
-                        provider: self.name.clone(),
-                        wire: "Anthropic Messages".to_string(),
-                    });
-                }
                 venice::apply_routing(&mut body, chosen);
                 venice::inference_path().to_string()
             }

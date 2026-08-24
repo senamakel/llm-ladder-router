@@ -102,13 +102,14 @@ roots are compiled in.
 | `POST /v1/chat/completions` | OpenAI chat completions |
 | `POST /v1/responses` | OpenAI responses |
 | `POST /v1/messages` | Anthropic Messages |
+| `POST /v1/embeddings` | OpenAI embeddings |
 | `GET /v1/models` | the configured ladders, listed as models |
 | `GET /healthz` | liveness |
 
-Both marketplaces serve all three formats natively, so requests are **relayed,
-not translated** — an Anthropic request reaches an Anthropic endpoint unchanged
-and its response comes back unchanged. Parameters this router does not model
-pass through untouched.
+Both marketplaces serve every format natively, so requests are **relayed, not
+translated** — an Anthropic request reaches an Anthropic endpoint unchanged and
+its response comes back unchanged. Parameters this router does not model pass
+through untouched.
 
 Responses is its own surface rather than a flavour of chat completions: the
 request names its prompt in `input` rather than `messages`, the reply is a
@@ -129,6 +130,46 @@ Every response says how it was routed: `x-ladder-name`, `x-ladder-rung`,
 `x-ladder-cap-per-1m`, `x-ladder-score`, `x-ladder-skipped`, and
 `x-ladder-reasoning-effort` when the ladder asked for a reasoning depth. When no rung can serve, the 502 body
 lists each rung and why it was passed over.
+
+## Embeddings
+
+An embedding model is not interchangeable with a chat model, so a ladder says
+which surface it answers on:
+
+```toml
+[[ladders]]
+name = "vectors"
+surface = "embeddings"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "venice-embed-1"
+```
+
+Everything else is the same machinery: rungs are ranked, a failed rung advances,
+a 429 parks its rung, and an exhausted account is skipped. The surface is
+checked at the door — an embeddings request naming a chat ladder is a 400 rather
+than a walk down a ladder that would fail identically at every rung and bill for
+each attempt — and `GET /v1/models` reports each ladder's surface so a client can
+tell them apart.
+
+Two things differ, and both are facts about the marketplaces rather than choices:
+
+- **No ceilings.** Neither marketplace publishes a price filter for embeddings:
+  Surplus's `/min{N}/` prefix 404s on `/v1/embeddings` in every spelling, and
+  `OpenRouter` lists no embedding model at all. A `max_cost_per_1m` on an
+  embeddings rung is refused at load time rather than sitting in the file looking
+  like a limit, and a provider ceiling written for the chat ladders is not
+  inherited by one.
+- **Where the price lives.** Surplus bills embeddings per unit of input, so it
+  quotes them in `media_unit_price` and leaves the per-token fields at zero. The
+  router reads the media-unit price when the unit is tokens, because a market
+  read as free would rank an embeddings rung ahead of every priced rung beside
+  it.
+
+Of the two marketplaces only Surplus carries embedding models today —
+`venice-embed-1` at the time of writing. `OpenRouter` answers on `/embeddings`
+but lists none, so a rung pointed there has nothing to serve it.
 
 ## Scoring
 
@@ -197,16 +238,18 @@ reasoning_effort = "high"       # every rung, unless it says otherwise
 Three rules hold. **The caller always wins** — a body already carrying
 `reasoning_effort` or `reasoning` is left alone, so a request asking for a
 shallow answer is not made expensive by the ladder it selected. **Only on the
-two OpenAI surfaces**, since Anthropic spells depth as a `thinking` token budget
-and inventing one from an effort word would be translating rather than relaying.
-And a ladder that declares nothing inserts nothing, so every ladder written
-before this field behaves exactly as it did.
+two OpenAI chat surfaces**, since Anthropic spells depth as a `thinking` token
+budget and inventing one from an effort word would be translating rather than
+relaying, and an embedding model does not reason at all — the field would be a
+400 on a request that was otherwise fine. And a ladder that declares nothing
+inserts nothing, so every ladder written before this field behaves exactly as it
+did.
 
-The two OpenAI surfaces spell the same idea differently, and each gets its own
-spelling: chat completions take a top-level `reasoning_effort` string, responses
-take a `reasoning` object with an `effort` member. Sending the chat spelling to
-`/responses` would leave an unknown top-level key in the body and buy none of
-the depth the ladder asked for.
+The two OpenAI chat surfaces spell the same idea differently, and each gets its
+own spelling: chat completions take a top-level `reasoning_effort` string, and
+responses take a `reasoning` object with an `effort` member. Sending the chat
+spelling to `/responses` would leave an unknown top-level key in the body and
+buy none of the depth the ladder asked for.
 
 The shipped `max-reasoning` ladder is the intended use: higher ceilings than
 `reasoning`, and no rung below a reasoning model — a ladder whose last rung is a
@@ -308,10 +351,10 @@ name = "scribe"
 ```
 
 A ladder of one rung is how this router says "this model or nothing". Mistral
-serves only the OpenAI chat-completions surface — it publishes neither
-`/v1/messages` nor `/v1/responses` — so a request on either of those wires is
-declined before it is sent rather than translated, and the error names the
-surface that was declined.
+serves the OpenAI chat-completions and embeddings surfaces, and publishes
+neither `/v1/messages` nor `/v1/responses` — so a request on either of those
+wires is declined before it is sent rather than translated, and the error names
+the surface that was declined.
 
 `kind = "venice"` is the same shape for a different reason. Venice's uncensored
 model *is* resold, but whether a given marketplace still carries it next month

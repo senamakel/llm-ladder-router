@@ -5,6 +5,10 @@
 use super::*;
 use crate::config::CostBasis;
 
+/// A slice of the live `venice-embed-1` order book, captured 2026-08-24.
+const EMBEDDINGS_ORDER_BOOK: &str =
+    include_str!("../../../tests/fixtures/surplus-embeddings-order-book.json");
+
 fn chosen(min_discount_pct: Option<u8>) -> Chosen {
     Chosen {
         rung: 0,
@@ -215,11 +219,11 @@ fn a_streaming_responses_request_is_refused_and_everything_else_is_served() {
     // `response.output_item.done`, so a client reading it sees an empty turn.
     assert!(!serves(Wire::Responses, true));
 
-    // Non-streaming responses is complete, and the other two surfaces are
+    // Non-streaming responses is complete, and every other surface is
     // unaffected either way - refusing more than the broken case would strand
     // traffic Surplus serves perfectly well.
     assert!(serves(Wire::Responses, false));
-    for wire in [Wire::OpenAi, Wire::Anthropic] {
+    for wire in [Wire::OpenAi, Wire::Anthropic, Wire::Embeddings] {
         for streaming in [true, false] {
             assert!(serves(wire, streaming), "{wire:?} streaming={streaming}");
         }
@@ -296,4 +300,89 @@ fn the_order_book_admits_only_sellers_under_the_ceiling() {
     let admitted = prices.admitted(Some(0.30), CostBasis::Completion);
     assert_eq!(admitted.len(), 1);
     assert_eq!(admitted[0].provider, "cheap");
+}
+
+/// An embedding model is billed per unit of input, so Surplus leaves the
+/// per-token fields at zero and quotes it in `media_unit_price`. Read naively
+/// that is a market full of free sellers.
+#[test]
+fn a_media_unit_price_stands_in_for_absent_token_prices() {
+    let prices = parse_order_book(EMBEDDINGS_ORDER_BOOK.as_bytes()).unwrap();
+
+    // 1000 micro-USD per Mtok is $0.001 per Mtok, and the direct price it is
+    // quoted against is 20000, or $0.02.
+    let cheapest = &prices.offers[0];
+    assert!(
+        (cheapest.completion_per_1m - 0.001).abs() < 1e-9,
+        "{cheapest:?}"
+    );
+    assert!(
+        (cheapest.prompt_per_1m - 0.001).abs() < 1e-9,
+        "{cheapest:?}"
+    );
+    assert!((cheapest.direct_completion_per_1m.unwrap() - 0.02).abs() < 1e-9);
+
+    // The floor is a real number rather than the zero the token fields carry.
+    let floor = prices.floor(CostBasis::Completion).unwrap();
+    assert!((floor - 0.001).abs() < 1e-9, "{floor}");
+}
+
+/// The unit is checked rather than assumed: the same field prices an image
+/// model per image, and a per-image price compared against a per-token ceiling
+/// would admit or refuse a seller for reasons that are not about money.
+#[test]
+fn a_media_unit_that_is_not_tokens_is_not_read_as_a_token_price() {
+    let body = serde_json::json!({
+        "offers": [{
+            "provider": "Venice AI",
+            "price_input_per_1m": 0.0,
+            "price_output_per_1m": 0.0,
+            "media_unit_price": 40_000.0,
+            "media_unit": "1 image",
+            "available": true,
+            "healthy": true,
+        }]
+    })
+    .to_string();
+
+    let offer = &parse_order_book(body.as_bytes()).unwrap().offers[0];
+    assert!(offer.completion_per_1m.abs() < f64::EPSILON, "{offer:?}");
+    // Nothing was published in a comparable unit, so there is no direct price
+    // to restate a ceiling against either.
+    assert_eq!(offer.direct_completion_per_1m, None);
+}
+
+/// A seller quoting no price of its own is reading as undiscounted, not as
+/// free. One usable seller at zero would otherwise drag the whole rung's floor
+/// to zero and rank it ahead of every priced rung it competes with.
+#[test]
+fn a_seller_quoting_no_price_of_its_own_is_read_as_undiscounted() {
+    let prices = parse_order_book(EMBEDDINGS_ORDER_BOOK.as_bytes()).unwrap();
+    let unquoted = prices
+        .offers
+        .iter()
+        .find(|offer| offer.provider == "Morpheus")
+        .expect("the fixture carries one seller with no media unit price");
+
+    // The direct price, 20000 micro-USD per Mtok, rather than zero.
+    assert!(
+        (unquoted.completion_per_1m - 0.02).abs() < 1e-9,
+        "{unquoted:?}"
+    );
+    assert!((unquoted.direct_completion_per_1m.unwrap() - 0.02).abs() < 1e-9);
+}
+
+/// Every prefixed spelling of the embeddings path 404s on the live API, so a
+/// discount never travels on this surface — which is why an embeddings ladder
+/// is refused a ceiling at load time.
+#[test]
+fn the_embeddings_path_never_carries_a_discount_prefix() {
+    assert_eq!(
+        inference_path(&chosen(Some(50)), Wire::Embeddings),
+        "/v1/embeddings"
+    );
+    assert_eq!(
+        inference_path(&chosen(None), Wire::Embeddings),
+        "/v1/embeddings"
+    );
 }

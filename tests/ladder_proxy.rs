@@ -61,6 +61,7 @@ async fn mock_surplus(behavior: Behavior, price_per_1m: f64) -> (String, Arc<Mut
         .route("/anthropic/{prefix}/v1/messages", post(surplus_completions))
         .route("/v1/responses", post(surplus_completions))
         .route("/{prefix}/v1/responses", post(surplus_completions))
+        .route("/v1/embeddings", post(surplus_embeddings))
         .with_state(state);
 
     (serve(app).await, recorded)
@@ -134,6 +135,30 @@ async fn surplus_completions(
         recorded.paths.push(uri.path().to_string());
     }
     respond(&state.behavior)
+}
+
+async fn surplus_embeddings(
+    State(state): State<MockState>,
+    uri: axum::http::Uri,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    {
+        let mut recorded = state.recorded.lock().unwrap();
+        recorded.bodies.push(body);
+        recorded.paths.push(uri.path().to_string());
+    }
+    match &state.behavior {
+        Behavior::Serve(provider) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "object": "list",
+                "provider": provider,
+                "data": [{ "object": "embedding", "index": 0, "embedding": [0.1, 0.2] }],
+                "usage": { "prompt_tokens": 3, "total_tokens": 3 },
+            })),
+        ),
+        behavior @ Behavior::Fail(..) => respond(behavior),
+    }
 }
 
 async fn openrouter_endpoints(State(state): State<MockState>) -> Json<serde_json::Value> {
@@ -994,4 +1019,102 @@ async fn a_broken_rung_is_tried_again_on_the_next_request() {
     ask(&router, "flash").await;
 
     assert_eq!(sp_recorded.lock().unwrap().bodies.len(), 2);
+}
+
+/// An embeddings ladder walks the same machinery as a chat one, and reaches the
+/// surface the caller asked for rather than the chat endpoint.
+#[tokio::test]
+async fn an_embeddings_request_reaches_the_embeddings_endpoint() {
+    let (surplus, recorded) = mock_surplus(Behavior::Serve("Venice AI".to_string()), 0.001).await;
+    let router = start_router(&embeddings_config(&surplus)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/embeddings"))
+        .json(&serde_json::json!({ "model": "vectors", "input": "hello" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.headers().get("x-ladder-model").unwrap(),
+        "venice-embed-1"
+    );
+    // No ceiling can be enforced on this surface, so none is claimed.
+    assert!(response.headers().get("x-ladder-cap-per-1m").is_none());
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"][0]["object"], "embedding");
+
+    let recorded = recorded.lock().unwrap();
+    // Never a `/min{N}/` prefix: every prefixed spelling 404s on the live API.
+    assert_eq!(recorded.paths, vec!["/v1/embeddings".to_string()]);
+    // The caller's body is relayed with only the model rewritten.
+    assert_eq!(recorded.bodies[0]["input"], "hello");
+    assert_eq!(recorded.bodies[0]["model"], "venice-embed-1");
+}
+
+/// A chat model cannot answer an embeddings request, so the mismatch is refused
+/// at the door rather than walked down a ladder that would fail identically at
+/// every rung and bill for each attempt.
+#[tokio::test]
+async fn a_ladder_declared_for_one_surface_refuses_the_other() {
+    let (surplus, recorded) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.001).await;
+    let router = start_router(&embeddings_config(&surplus)).await;
+    let client = reqwest::Client::new();
+
+    // The embeddings ladder, asked for a chat completion.
+    let response = client
+        .post(format!("{router}/v1/chat/completions"))
+        .json(&serde_json::json!({ "model": "vectors", "messages": [] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains("embeddings"), "{message}");
+
+    // And the chat ladder, asked for embeddings.
+    let response = client
+        .post(format!("{router}/v1/embeddings"))
+        .json(&serde_json::json!({ "model": "prose", "input": "hello" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    // Neither reached an upstream.
+    assert!(recorded.lock().unwrap().paths.is_empty());
+}
+
+/// One provider, two ladders: the embeddings one and a chat one to mismatch it
+/// against.
+fn embeddings_config(surplus: &str) -> String {
+    format!(
+        r#"
+        [credits]
+        min_balance_usd = 0.5
+
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{surplus}"
+        api_key_env = "TEST_SURPLUS_KEY"
+
+        [[ladders]]
+        name = "vectors"
+        surface = "embeddings"
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-embed-1"
+
+        [[ladders]]
+        name = "prose"
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+        "#
+    )
 }

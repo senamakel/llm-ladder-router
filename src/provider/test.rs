@@ -197,6 +197,13 @@ async fn upstream() -> String {
                 axum::Json(serde_json::json!({ "sent": body.0 }))
             }),
         )
+        // Mistral's embeddings surface, echoing the body for the same reason.
+        .route(
+            "/v1/embeddings",
+            post(|body: axum::Json<serde_json::Value>| async move {
+                axum::Json(serde_json::json!({ "sent": body.0 }))
+            }),
+        )
         // Venice's own path, which roots its version at `/api/v1`. Echoes the
         // body for the same reason.
         .route(
@@ -435,6 +442,21 @@ fn the_anthropic_surface_is_left_alone() {
     assert!(body.get("reasoning_effort").is_none());
 }
 
+/// An embedding model does not reason, so a ladder's declared depth stops at
+/// this surface rather than becoming a 400 on a request that was otherwise
+/// fine.
+#[test]
+fn the_embeddings_surface_is_left_alone() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("high".to_string());
+    let mut body = serde_json::json!({ "input": "hello" });
+
+    apply_reasoning_effort(&mut body, &chosen, Wire::Embeddings);
+
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("reasoning").is_none());
+}
+
 /// A ladder that declares nothing changes nothing.
 #[test]
 fn no_declared_effort_inserts_nothing() {
@@ -598,9 +620,31 @@ async fn a_direct_provider_serves_the_openai_surface() {
     assert_eq!(echoed["sent"]["model"], "labs-leanstral-1-5");
 }
 
-/// Only the chat-completions surface exists here, so a request on either other
-/// wire is declined before the round trip. The failover loop reads that as this
-/// rung's failure and takes the next one.
+/// A direct provider publishes embeddings as well as chat, and the two are
+/// different endpoints rather than different bodies at one endpoint.
+#[tokio::test]
+async fn a_direct_provider_serves_the_embeddings_surface() {
+    let client = mistral_client(&upstream().await);
+
+    let dispatched = client
+        .infer(
+            &scribe_rung(),
+            Wire::Embeddings,
+            &serde_json::json!({ "model": "scribe", "input": "hello" }),
+        )
+        .await
+        .unwrap();
+
+    assert!(dispatched.status.is_success());
+    let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
+    assert_eq!(echoed["sent"]["model"], "labs-leanstral-1-5");
+    // The caller's payload is relayed untouched; only the model is rewritten.
+    assert_eq!(echoed["sent"]["input"], "hello");
+}
+
+/// Only the chat-completions and embeddings surfaces exist here, so a request
+/// on either of the others is declined before the round trip. The failover loop
+/// reads that as this rung's failure and takes the next one.
 ///
 /// The declined surface is named in the error rather than assumed: a caller
 /// told "mistral does not serve the Anthropic Messages API" when they posted to
