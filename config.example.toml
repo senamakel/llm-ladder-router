@@ -244,3 +244,29 @@ name = "scribe"
   [[ladders.rungs]]
   provider = "mistral"
   model = "labs-leanstral-1-5"
+
+
+# The embeddings ladder.
+#
+# An embedding model is not interchangeable with a chat model, so the ladder
+# says which surface it answers on and the router refuses the pairing at the
+# door rather than sending prose to a vector endpoint. Everything else is the
+# same machinery: rungs are ranked, a failed rung advances, and a 429 parks its
+# rung.
+#
+# No ceiling appears here, and one would be refused at load time. Neither
+# marketplace publishes a price filter for embeddings — Surplus's `/min{N}/`
+# prefix 404s on `/v1/embeddings` in every spelling, and OpenRouter lists no
+# embedding model at all — so a number here would read like a limit and bind
+# nothing. Surplus's own $1.00 provider ceiling is not inherited by these rungs
+# for the same reason. See `docs/specs/marketplace-apis.md`.
+#
+# Of the two marketplaces only Surplus carries an embedding model today, at a
+# direct price of $0.02/Mtok with sellers observed from $0.001.
+[[ladders]]
+name = "vectors"
+surface = "embeddings"
+
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "venice-embed-1"
