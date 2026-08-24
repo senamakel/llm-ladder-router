@@ -48,7 +48,7 @@
 //!
 //! let ladder = config.ladder("flash").expect("the ladder was just defined");
 //! // The rung's ceiling is tighter than the provider's, so it wins.
-//! assert_eq!(config.cap_for(&ladder.rungs[0]), Some(0.30));
+//! assert_eq!(config.cap_for(ladder, &ladder.rungs[0]), Some(0.30));
 //! # Ok::<(), llm_ladder_router::Error>(())
 //! ```
 
@@ -63,7 +63,9 @@ pub mod provider;
 pub mod proxy;
 pub mod session;
 
-pub use config::{Config, CostBasis, Ladder, Provider, ProviderKind, RateLimits, Rung, Sessions};
+pub use config::{
+    Config, CostBasis, Ladder, Provider, ProviderKind, RateLimits, Rung, Sessions, Surface,
+};
 pub use cooldown::{Cooldowns, Cooled};
 pub use credits::CreditState;
 pub use error::{Error, Result};
