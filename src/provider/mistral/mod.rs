@@ -13,13 +13,16 @@ use crate::ladder::Chosen;
 
 use super::{Disposition, Wire};
 
-/// The inference path, relative to the base URL.
+/// The inference path for a wire format, relative to the base URL.
 ///
-/// Only the `OpenAI`-compatible surface exists; an Anthropic-wire request is
+/// Only the `OpenAI`-compatible surfaces exist; an Anthropic-wire request is
 /// refused before it is sent rather than translated. See [`serves`].
 #[must_use]
-pub fn inference_path() -> &'static str {
-    "/v1/chat/completions"
+pub fn inference_path(wire: Wire) -> &'static str {
+    match wire {
+        Wire::Anthropic | Wire::OpenAi => "/v1/chat/completions",
+        Wire::Embeddings => "/v1/embeddings",
+    }
 }
 
 /// Whether this provider serves a wire format at all.
@@ -27,10 +30,14 @@ pub fn inference_path() -> &'static str {
 /// Mistral publishes no Anthropic Messages surface. Relaying an Anthropic body
 /// to the chat-completions endpoint would be a 400 the caller cannot act on and
 /// a round trip nobody needed, so the rung declines instead — which the
-/// failover loop treats as this rung's failure and takes the next one.
+/// failover loop treats as this rung's failure and takes the next one. It does
+/// publish embeddings, so that surface is served.
 #[must_use]
 pub fn serves(wire: Wire) -> bool {
-    wire == Wire::OpenAi
+    match wire {
+        Wire::OpenAi | Wire::Embeddings => true,
+        Wire::Anthropic => false,
+    }
 }
 
 /// Applies a chosen rung to an outgoing request body.
