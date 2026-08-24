@@ -129,6 +129,15 @@ pub fn balance_path() -> &'static str {
 /// place on each surface: `/min{N}/v1/chat/completions` for `OpenAI`, but
 /// `/anthropic/min{N}/v1/messages` for Anthropic. Both were verified against
 /// the live API; the other orderings 404.
+///
+/// Embeddings have no discounted form at all. `/v1/embeddings` serves, and
+/// every prefixed spelling of it — `/min{N}/v1/embeddings`,
+/// `/v1/min{N}/embeddings`, `/embeddings/min{N}` — 404s, measured against the
+/// live API on 2026-08-24 while `/min50/v1/chat/completions` answered on the
+/// same run. That is why an embeddings ladder carries no ceiling: there is
+/// nothing to express one with, and [`crate::config::Surface::is_cappable`]
+/// says so at load time rather than letting a number sit in the file looking
+/// like a limit.
 #[must_use]
 pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
     let discount = match chosen.min_discount_pct {
@@ -140,6 +149,7 @@ pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
         (Wire::OpenAi, None) => "/v1/chat/completions".to_string(),
         (Wire::Anthropic, Some(pct)) => format!("/anthropic/min{pct}/v1/messages"),
         (Wire::Anthropic, None) => "/anthropic/v1/messages".to_string(),
+        (Wire::Embeddings, _) => "/v1/embeddings".to_string(),
     }
 }
 
