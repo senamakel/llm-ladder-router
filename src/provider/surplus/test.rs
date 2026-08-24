@@ -268,6 +268,27 @@ fn the_marketplace_refusals_advance_the_ladder() {
 }
 
 #[test]
+fn a_sub_provider_schema_rejection_advances() {
+    // The exact shape seen on 2026-08-24: a sub-provider that accepts only a
+    // string `content` refusing an Anthropic block array, relayed as a 400.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":"2 request validation errors: Input should be a valid string, field: 'messages[1].content.str'"}"#
+        ),
+        Disposition::Advance
+    );
+    // The same failure wearing Surplus's relay prefix.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":"Provider returned 400: bad content block"}"#
+        ),
+        Disposition::Advance
+    );
+}
+
+#[test]
 fn a_genuine_caller_error_stops_the_ladder() {
     assert_eq!(
         classify(
