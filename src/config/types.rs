@@ -352,12 +352,55 @@ pub enum CostBasis {
     Blended,
 }
 
+/// Which API surface a ladder answers on.
+///
+/// A ladder is a set of interchangeable models, and an embedding model is not
+/// interchangeable with a chat model: the request bodies differ, the responses
+/// differ, and pointing one at the other's endpoint is a 400 nothing downstream
+/// can recover from. Declaring the surface is what lets the router refuse that
+/// at the door — and at load time, refuse a ceiling the embeddings surface
+/// cannot enforce.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Surface {
+    /// Chat completions and Anthropic messages, the default.
+    #[default]
+    Chat,
+    /// `OpenAI`-format embeddings, at `/v1/embeddings`.
+    ///
+    /// There is no Anthropic counterpart, so this surface has exactly one wire
+    /// format.
+    Embeddings,
+}
+
+impl Surface {
+    /// Whether a ceiling on this surface can actually be enforced.
+    ///
+    /// Neither marketplace publishes a price filter for embeddings — Surplus's
+    /// `/min{N}/` prefix 404s on `/v1/embeddings`, and `OpenRouter` has no
+    /// embedding models at all — so a ceiling here would be a number that reads
+    /// like a limit and binds nothing.
+    #[must_use]
+    pub fn is_cappable(self) -> bool {
+        match self {
+            Self::Chat => true,
+            Self::Embeddings => false,
+        }
+    }
+}
+
 /// An ordered list of rungs tried in sequence.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ladder {
     /// The name a request uses to select this ladder.
     pub name: String,
+    /// Which API surface this ladder answers on.
+    ///
+    /// Unset means [`Surface::Chat`], so every ladder written before embeddings
+    /// existed keeps behaving exactly as it did.
+    #[serde(default)]
+    pub surface: Surface,
     /// Which price the rung ceilings apply to.
     #[serde(default)]
     pub cost_basis: CostBasis,
@@ -379,6 +422,21 @@ pub struct Ladder {
 }
 
 impl Ladder {
+    /// The ceiling that applies to one of this ladder's rungs, once the
+    /// surface has had its say.
+    ///
+    /// An embeddings ladder has no ceiling at any rung: an explicit one is
+    /// refused at load time, and an inherited provider ceiling is dropped here
+    /// rather than silently skipping every rung for want of a filter that does
+    /// not exist.
+    #[must_use]
+    pub fn cap_for(&self, rung: &Rung, provider_cap: Option<f64>) -> Option<f64> {
+        if !self.surface.is_cappable() {
+            return None;
+        }
+        rung.effective_cap(provider_cap)
+    }
+
     /// The effort that applies to one of this ladder's rungs.
     #[must_use]
     pub fn effort_for(&self, rung: &Rung) -> Option<String> {
