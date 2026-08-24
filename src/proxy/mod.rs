@@ -1,4 +1,4 @@
-//! The `OpenAI`-compatible HTTP surface and the failover loop.
+//! The `OpenAI`- and Anthropic-compatible HTTP surfaces, and the failover loop.
 //!
 //! A request names a ladder in its `model` field. The router ranks that
 //! ladder's rungs, dispatches to the best one that can serve, and on any
@@ -98,7 +98,7 @@ pub fn build_with_credentials(
     };
 
     let app = axum::Router::new()
-        // The OpenAI surface, and the Anthropic Messages surface. Both are
+        // The OpenAI surfaces, and the Anthropic Messages surface. All are
         // relayed to the marketplaces' own native endpoints for that format
         // rather than translated, so no field is lost in either direction.
         .route("/v1/chat/completions", post(chat_completions))

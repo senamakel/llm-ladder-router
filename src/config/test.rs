@@ -363,7 +363,7 @@ fn the_shipped_example_config_is_valid() {
     // ships, and a container that binds loopback answers nobody.
     assert_eq!(config.server.bind, "0.0.0.0:6969");
 
-    // The example is the documentation for the four ladders the router ships
+    // The example is the documentation for the five ladders the router ships
     // with; a change to any of them should be deliberate.
     assert_eq!(
         config
@@ -403,6 +403,14 @@ fn the_shipped_example_config_is_valid() {
     assert_eq!(scribe.rungs[0].model, "labs-leanstral-1-5");
     assert!(config.cap_for(scribe, &scribe.rungs[0]).is_none());
     assert!(!config.providers["mistral"].kind.is_marketplace());
+
+    // The embeddings ladder, on its own surface and deliberately uncapped:
+    // no marketplace publishes a price filter there, so a ceiling would be
+    // refused at load time.
+    let vectors = config.ladder("vectors").unwrap();
+    assert_eq!(vectors.surface, Surface::Embeddings);
+    assert_eq!(vectors.rungs[0].model, "venice-embed-1");
+    assert_eq!(config.cap_for(vectors, &vectors.rungs[0]), None);
 
     let max = config.ladder("max-reasoning").unwrap();
     assert_eq!(
