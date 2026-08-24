@@ -37,6 +37,16 @@ slugs (`deepseek/deepseek-v4-flash`).
 `provider.only` is deliberately unused: an exclusive pin has been observed to
 leave requests hanging while idle sub-providers sat unused.
 
+### No embedding models
+
+`POST /embeddings` exists — it answers 401 for an unauthenticated request, where
+an unknown path answers 404 — but the catalogue carries nothing to point it at.
+All 419 models in `GET /models` are `text->text`; not one reports an embedding
+modality, `supported_parameters`, or `supported_features`. An `OpenRouter` rung
+on an embeddings ladder is therefore a configuration mistake that only the
+upstream can report, which is why the router does not pre-emptively decline the
+surface here: the route is real, and what it lists may change.
+
 ## Surplus Intelligence
 
 Base URL `https://api.surplusintelligence.ai`. Bearer auth. Unqualified model
