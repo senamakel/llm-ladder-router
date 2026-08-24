@@ -1,7 +1,7 @@
 # LLM Ladder Router
 
 Budget-aware routing across LLM marketplace tiers, behind an OpenAI- and
-Anthropic-compatible proxy.
+Anthropic-compatible proxy — chat completions, responses, and messages.
 
 A **ladder** is a set of **rungs**. Each rung names a marketplace, a model, the
 most it may pay per million tokens, and what that model is *worth* — its
@@ -27,7 +27,7 @@ POST /v1/chat/completions {"model": "reasoning", ...}
 Ladder order is not precedence. It is documentation, and the tie-break when two
 rungs score the same.
 
-Four ladders ship in `config.example.toml`:
+Five ladders ship in `config.example.toml`:
 
 | Ladder | Rungs | Ceilings | Multipliers | Depth |
 | --- | --- | --- | --- | --- |
@@ -35,6 +35,7 @@ Four ladders ship in `config.example.toml`:
 | `reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, `deepseek-v4-flash`, openrouter `deepseek/deepseek-v4-flash` | 0.30 × 3 / 0.15 / 0.30 | 2.0 / 1.8 / 1.2 / 1.0 / 1.0 | — |
 | `max-reasoning` | surplus `deepseek-v4-pro`, `glm-5.2`, `gpt-5.6-luna`, openrouter `deepseek/deepseek-v4-pro` | 1.00 / 1.00 / 0.60 / 1.00 | 8.0 / 6.0 / 1.5 / 8.0 | `high` / `high` / `xhigh` / `high` |
 | `scribe` | mistral `labs-leanstral-1-5` | — | — | — |
+| `uncensored` | surplus `venice-uncensored-1.2`, venice `venice-uncensored-1-2` | 0.30 / — | 1.0 / 1.0 | — |
 
 `max-reasoning` is the odd one and deliberately so: it pays roughly three times
 what `reasoning` pays, and it asks for depth — `reasoning_effort = "high"` on
@@ -99,6 +100,7 @@ roots are compiled in.
 | Path | Surface |
 | --- | --- |
 | `POST /v1/chat/completions` | OpenAI chat completions |
+| `POST /v1/responses` | OpenAI responses |
 | `POST /v1/messages` | Anthropic Messages |
 | `POST /v1/embeddings` | OpenAI embeddings |
 | `GET /v1/models` | the configured ladders, listed as models |
@@ -108,6 +110,12 @@ Both marketplaces serve every format natively, so requests are **relayed, not
 translated** — an Anthropic request reaches an Anthropic endpoint unchanged and
 its response comes back unchanged. Parameters this router does not model pass
 through untouched.
+
+Responses is its own surface rather than a flavour of chat completions: the
+request names its prompt in `input` rather than `messages`, the reply is a
+`response` object rather than a `chat.completion`, and reasoning depth is
+spelled differently in each. It is also the only surface some agent harnesses
+speak — anything built on `codex` posts to `/responses` and nothing else.
 
 The `model` field names the **ladder** (`flash`, `reasoning`, `max-reasoning`,
 `scribe`), not a model.
@@ -230,10 +238,18 @@ reasoning_effort = "high"       # every rung, unless it says otherwise
 Three rules hold. **The caller always wins** — a body already carrying
 `reasoning_effort` or `reasoning` is left alone, so a request asking for a
 shallow answer is not made expensive by the ladder it selected. **Only on the
-OpenAI surface**, since Anthropic spells depth as a `thinking` token budget and
-inventing one from an effort word would be translating rather than relaying.
-And a ladder that declares nothing inserts nothing, so every ladder written
-before this field behaves exactly as it did.
+two OpenAI chat surfaces**, since Anthropic spells depth as a `thinking` token
+budget and inventing one from an effort word would be translating rather than
+relaying, and an embedding model does not reason at all — the field would be a
+400 on a request that was otherwise fine. And a ladder that declares nothing
+inserts nothing, so every ladder written before this field behaves exactly as it
+did.
+
+The two OpenAI chat surfaces spell the same idea differently, and each gets its
+own spelling: chat completions take a top-level `reasoning_effort` string, and
+responses take a `reasoning` object with an `effort` member. Sending the chat
+spelling to `/responses` would leave an unknown top-level key in the body and
+buy none of the depth the ladder asked for.
 
 The shipped `max-reasoning` ladder is the intended use: higher ceilings than
 `reasoning`, and no rung below a reasoning model — a ladder whose last rung is a
@@ -335,9 +351,50 @@ name = "scribe"
 ```
 
 A ladder of one rung is how this router says "this model or nothing". Mistral
-serves the OpenAI chat and embeddings surfaces but publishes no Anthropic
-Messages endpoint, so an Anthropic-wire request to such a rung is declined
-before it is sent rather than translated.
+serves the OpenAI chat-completions and embeddings surfaces, and publishes
+neither `/v1/messages` nor `/v1/responses` — so a request on either of those
+wires is declined before it is sent rather than translated, and the error names
+the surface that was declined.
+
+`kind = "venice"` is the same shape for a different reason. Venice's uncensored
+model *is* resold, but whether a given marketplace still carries it next month
+is that marketplace's policy decision rather than a fact the router can lean on.
+So the `uncensored` ladder buys it on Surplus when Surplus is cheap and falls
+back to the house that publishes it when Surplus cannot serve:
+
+```toml
+[providers.venice]
+kind = "venice"
+base_url = "https://api.venice.ai"
+api_key_env = "VENICE_INFERENCE_KEY"
+
+[[ladders]]
+name = "uncensored"
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "venice-uncensored-1.2"
+  max_cost_per_1m = 0.30
+
+  [[ladders.rungs]]
+  provider = "venice"
+  model = "venice-uncensored-1-2"
+```
+
+The two spellings are the same model: a rung names it in its provider's own
+convention, and the marketplace writes the version with a dot where the house
+writes it with a hyphen.
+
+Both rungs are the same model, so nothing is traded away by falling through —
+only the discount is. The order comes out of the engine rather than the file: an
+unpriced rung has nothing to divide by its multiplier, so it ranks behind every
+rung that could be measured, and the direct rung serves exactly when the resold
+one is over its ceiling, stale, rate-limited, or gone.
+
+One Venice-specific rewrite travels with every request: Venice prepends a system
+prompt of its own unless told not to, and a tier that picked this model and
+silently got that framing on top of it is not the tier that was picked — so the
+router sets `venice_parameters.include_venice_system_prompt` to `false`. A
+caller who sends their own `venice_parameters` keeps every key they set.
 
 ## Marketplaces
 

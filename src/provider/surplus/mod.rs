@@ -185,6 +185,30 @@ pub fn balance_path() -> &'static str {
     "/v1/buyer/me"
 }
 
+/// Whether Surplus can usefully serve this surface for this request.
+///
+/// Everything except a **streamed** responses request. Surplus serves that
+/// surface, and the non-streaming form is complete, but its event stream is
+/// not: it emits `response.created`, `response.output_item.added`,
+/// `response.output_text.delta` and `response.completed`, and stops there. It
+/// never sends `response.output_item.done`, and the `response` on
+/// `response.completed` carries no `output` array.
+///
+/// An agent client assembles its turn from the finished items, so it sees a
+/// turn with no output and ends silently — the model's answer arrives in the
+/// deltas and is discarded. That is worse than an error: the run looks like it
+/// completed and produced nothing. Codex is the case in hand, and it speaks
+/// only this surface, so refusing here is what lets the ladder step down to a
+/// provider whose stream is complete (`OpenRouter` emits all nine events).
+///
+/// Refused before the round trip, in the manner of [`super::mistral::serves`],
+/// so the failover loop reads it as this rung failing rather than as the
+/// caller's mistake.
+#[must_use]
+pub fn serves(wire: Wire, streaming: bool) -> bool {
+    !(wire == Wire::Responses && streaming)
+}
+
 /// The inference path for a chosen rung on a given wire format.
 ///
 /// A rung with a ceiling routes through the `/min{N}/` prefix, which is the
@@ -212,16 +236,71 @@ pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
         (Wire::OpenAi, None) => "/v1/chat/completions".to_string(),
         (Wire::Anthropic, Some(pct)) => format!("/anthropic/min{pct}/v1/messages"),
         (Wire::Anthropic, None) => "/anthropic/v1/messages".to_string(),
+        // The responses surface sits under the same root as chat completions,
+        // not under the `/anthropic` one, and takes the discount prefix in the
+        // same leading position.
+        (Wire::Responses, Some(pct)) => format!("/min{pct}/v1/responses"),
+        (Wire::Responses, None) => "/v1/responses".to_string(),
+        // Embeddings have no discounted spelling at all; see above.
         (Wire::Embeddings, _) => "/v1/embeddings".to_string(),
     }
 }
 
 /// Applies a chosen rung to an outgoing request body.
 ///
-/// Only the model is rewritten: the ceiling travels in the path, not the body.
+/// The model is rewritten - the ceiling travels in the path, not the body -
+/// and the `developer` role is folded back to `system`; see
+/// `fold_developer_role` for why that one exception exists.
 pub fn apply_routing(body: &mut serde_json::Value, chosen: &Chosen) {
     if let Some(object) = body.as_object_mut() {
         object.insert("model".to_string(), chosen.model.clone().into());
+    }
+    fold_developer_role(body);
+}
+
+/// Rewrites every `developer` role in an outgoing body to `system`.
+///
+/// This is the one place the router edits a caller's content rather than
+/// relaying it, and it is here because the alternative is not relaying at all.
+/// Surplus's request schema predates the `developer` role and rejects it
+/// outright, on every surface:
+///
+/// ```text
+/// 400 Failed to deserialize the JSON body into the target type:
+///     messages[1].role: unknown variant `developer`,
+///     expected one of `system`, `user`, `assistant`, `tool`
+/// ```
+///
+/// The `codex` harness opens every turn with a `developer` message, so without
+/// this no Codex session can reach a Surplus rung - not a step down to the next
+/// one either, because a 400 is a statement about the request and
+/// [`super::types::classify_status`] deliberately hands those straight back.
+/// The role is also not a real distinction here: `developer` is `system`
+/// renamed, and Surplus's own schema still spells it the old way. `OpenRouter`
+/// accepts either, so nothing else needs this.
+///
+/// Both the chat shape (`messages`) and the responses shape (`input`) are
+/// covered; Surplus converts the latter internally and reports its complaint
+/// against `messages` regardless.
+fn fold_developer_role(body: &mut serde_json::Value) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    for key in ["messages", "input"] {
+        let Some(items) = object
+            .get_mut(key)
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        for item in items {
+            let Some(role) = item.get_mut("role") else {
+                continue;
+            };
+            if role.as_str() == Some("developer") {
+                *role = serde_json::Value::String("system".to_string());
+            }
+        }
     }
 }
 

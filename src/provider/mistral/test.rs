@@ -34,10 +34,13 @@ fn only_the_model_is_rewritten() {
 }
 
 #[test]
-fn the_openai_surfaces_serve_and_anthropic_does_not() {
+fn the_chat_and_embeddings_surfaces_serve_and_the_others_do_not() {
     assert!(serves(Wire::OpenAi));
     assert!(serves(Wire::Embeddings));
     assert!(!serves(Wire::Anthropic));
+    // Mistral answers `/v1/responses` with a 404, so that surface is declined
+    // here rather than relayed to the chat-completions endpoint.
+    assert!(!serves(Wire::Responses));
     assert_eq!(inference_path(Wire::OpenAi), "/v1/chat/completions");
     assert_eq!(inference_path(Wire::Embeddings), "/v1/embeddings");
 }

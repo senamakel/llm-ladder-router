@@ -125,6 +125,15 @@ pub enum ProviderKind {
     /// choice of model, not a price. It is here for models no marketplace
     /// carries — Leanstral being the one that prompted it.
     Mistral,
+    /// Venice's own API, reached directly rather than through a reseller.
+    ///
+    /// Direct for the same reasons as [`ProviderKind::Mistral`] — one seller,
+    /// no order book, no balance to poll — but it is here for a different one.
+    /// The model it serves is the uncensored one, whose presence on any given
+    /// marketplace is a matter of that marketplace's policy this week, so a
+    /// rung at the house that publishes it is the floor under a tier that would
+    /// otherwise disappear when a reseller changes its mind.
+    Venice,
 }
 
 impl ProviderKind {
@@ -138,7 +147,7 @@ impl ProviderKind {
     pub fn is_marketplace(self) -> bool {
         match self {
             Self::OpenRouter | Self::Surplus => true,
-            Self::Mistral => false,
+            Self::Mistral | Self::Venice => false,
         }
     }
 }

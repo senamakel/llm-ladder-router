@@ -10,6 +10,7 @@ pub mod mistral;
 pub mod openrouter;
 pub mod surplus;
 mod types;
+pub mod venice;
 
 pub use types::{
     Dispatched, Disposition, Wire, apply_reasoning_effort, classify_status, parse_retry_after,
@@ -74,10 +75,15 @@ impl Client {
 
     /// Whether this provider serves a wire format at all.
     ///
-    /// Both marketplaces publish all three surfaces; Mistral publishes no
-    /// Anthropic Messages endpoint. A rung on a provider that does not serve
-    /// the caller's surface declines before the round trip — see
+    /// Both marketplaces publish every surface; Mistral publishes neither the
+    /// Anthropic Messages one nor the `OpenAI` Responses one, and Venice
+    /// publishes only chat completions. A rung on a provider that does not
+    /// serve the caller's surface declines before the round trip — see
     /// [`Client::infer`].
+    ///
+    /// The question is asked of the wire format alone, so a refusal that also
+    /// depends on the body — Surplus declining a *streamed* responses request,
+    /// see [`surplus::serves`] — is not answered here.
     ///
     /// Answering "yes" is not a claim that the *model* named by the rung suits
     /// the surface. `OpenRouter` serves `/embeddings` but lists no embedding
@@ -88,6 +94,7 @@ impl Client {
         match self.provider.kind {
             ProviderKind::OpenRouter | ProviderKind::Surplus => true,
             ProviderKind::Mistral => mistral::serves(wire),
+            ProviderKind::Venice => venice::serves(wire),
         }
     }
 
@@ -113,13 +120,15 @@ impl Client {
         let path = match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::endpoints_path(model),
             ProviderKind::Surplus => surplus::order_book_path(model),
-            ProviderKind::Mistral => return Err(self.no_market_data("order book")),
+            ProviderKind::Mistral | ProviderKind::Venice => {
+                return Err(self.no_market_data("order book"));
+            }
         };
         let body = self.get(&path).await?;
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::parse_endpoints(&body),
             ProviderKind::Surplus => surplus::parse_order_book(&body),
-            ProviderKind::Mistral => Err(self.no_market_data("order book")),
+            ProviderKind::Mistral | ProviderKind::Venice => Err(self.no_market_data("order book")),
         }
     }
 
@@ -149,13 +158,15 @@ impl Client {
         let path = match self.provider.kind {
             ProviderKind::OpenRouter => "/credits".to_string(),
             ProviderKind::Surplus => surplus::balance_path().to_string(),
-            ProviderKind::Mistral => return Err(self.no_market_data("balance")),
+            ProviderKind::Mistral | ProviderKind::Venice => {
+                return Err(self.no_market_data("balance"));
+            }
         };
         let body = self.get(&path).await?;
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::parse_credits(&body),
             ProviderKind::Surplus => surplus::parse_balance(&body),
-            ProviderKind::Mistral => Err(self.no_market_data("balance")),
+            ProviderKind::Mistral | ProviderKind::Venice => Err(self.no_market_data("balance")),
         }
     }
 
@@ -180,7 +191,7 @@ impl Client {
         if !self.serves(wire) {
             return Err(Error::UnsupportedWire {
                 provider: self.name.clone(),
-                wire: wire.name().to_string(),
+                wire: wire.api_name().to_string(),
             });
         }
 
@@ -195,12 +206,25 @@ impl Client {
                 openrouter::inference_path(wire).to_string()
             }
             ProviderKind::Surplus => {
+                // Refused before the round trip: Surplus's responses stream is
+                // truncated, and a client that reads it comes away with an
+                // empty turn rather than an error. See `surplus::serves`.
+                if !surplus::serves(wire, types::is_streaming(&body)) {
+                    return Err(Error::UnsupportedWire {
+                        provider: self.name.clone(),
+                        wire: "streaming OpenAI Responses".to_string(),
+                    });
+                }
                 surplus::apply_routing(&mut body, chosen);
                 surplus::inference_path(chosen, wire)
             }
             ProviderKind::Mistral => {
                 mistral::apply_routing(&mut body, chosen);
                 mistral::inference_path(wire).to_string()
+            }
+            ProviderKind::Venice => {
+                venice::apply_routing(&mut body, chosen);
+                venice::inference_path().to_string()
             }
         };
 
@@ -254,6 +278,7 @@ impl Client {
             ProviderKind::OpenRouter => openrouter::classify(dispatched.status, &dispatched.body),
             ProviderKind::Surplus => surplus::classify(dispatched.status, &dispatched.body),
             ProviderKind::Mistral => mistral::classify(dispatched.status, &dispatched.body),
+            ProviderKind::Venice => venice::classify(dispatched.status, &dispatched.body),
         }
     }
 

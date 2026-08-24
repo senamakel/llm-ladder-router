@@ -104,6 +104,7 @@ fn the_endpoints_path_names_the_model() {
 fn each_wire_format_has_its_own_path() {
     assert_eq!(inference_path(Wire::OpenAi), "/chat/completions");
     assert_eq!(inference_path(Wire::Anthropic), "/messages");
+    assert_eq!(inference_path(Wire::Responses), "/responses");
     // The route exists and answers; whether any listed model suits it is the
     // configuration's business, not this function's.
     assert_eq!(inference_path(Wire::Embeddings), "/embeddings");

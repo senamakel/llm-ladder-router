@@ -59,6 +59,8 @@ async fn mock_surplus(behavior: Behavior, price_per_1m: f64) -> (String, Arc<Mut
         .route("/{prefix}/v1/chat/completions", post(surplus_completions))
         .route("/anthropic/v1/messages", post(surplus_completions))
         .route("/anthropic/{prefix}/v1/messages", post(surplus_completions))
+        .route("/v1/responses", post(surplus_completions))
+        .route("/{prefix}/v1/responses", post(surplus_completions))
         .route("/v1/embeddings", post(surplus_embeddings))
         .with_state(state);
 
@@ -82,6 +84,7 @@ async fn mock_openrouter(behavior: Behavior, price_per_1m: f64) -> (String, Arc<
         .route("/credits", get(openrouter_credits))
         .route("/chat/completions", post(openrouter_completions))
         .route("/messages", post(openrouter_completions))
+        .route("/responses", post(openrouter_completions))
         .with_state(state);
 
     (format!("{}/", serve(app).await), recorded)
@@ -710,6 +713,72 @@ async fn the_anthropic_surface_falls_through_to_the_backstop_too() {
     // OpenRouter's Anthropic surface lives at /messages and still takes the
     // ceiling in the body.
     assert_eq!(recorded.paths[0], "/messages");
+    assert_eq!(
+        recorded.bodies[0]["provider"]["max_price"]["completion"],
+        0.30
+    );
+}
+
+#[tokio::test]
+async fn the_responses_surface_routes_the_same_ladders() {
+    let (surplus, sp_recorded) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/responses"))
+        .json(&serde_json::json!({
+            "model": "flash",
+            "input": "hi",
+            "max_output_tokens": 16,
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-ladder-provider"], "surplus");
+    assert_eq!(response.headers()["x-ladder-rung"], "0");
+
+    let recorded = sp_recorded.lock().unwrap();
+    // Surplus puts this surface under the same root as chat completions, with
+    // the discount prefix leading — not under `/anthropic`.
+    assert_eq!(recorded.paths[0], "/min95/v1/responses");
+    assert_eq!(recorded.bodies[0]["model"], "deepseek-v4-flash");
+    // A responses-shaped body is relayed as it stands rather than translated
+    // into a messages array.
+    assert_eq!(recorded.bodies[0]["input"], "hi");
+    assert_eq!(recorded.bodies[0]["max_output_tokens"], 16);
+}
+
+#[tokio::test]
+async fn the_responses_surface_falls_through_to_the_backstop_too() {
+    let (surplus, _) = mock_surplus(
+        Behavior::Fail(
+            StatusCode::NOT_FOUND,
+            "minimum_discount_not_met".to_string(),
+        ),
+        0.10,
+    )
+    .await;
+    let (openrouter, or_recorded) =
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/responses"))
+        .json(&serde_json::json!({ "model": "flash", "input": "hi" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-ladder-provider"], "openrouter");
+
+    let recorded = or_recorded.lock().unwrap();
+    // OpenRouter's responses surface lives at /responses and still takes the
+    // ceiling in the body, exactly as its other two surfaces do.
+    assert_eq!(recorded.paths[0], "/responses");
     assert_eq!(
         recorded.bodies[0]["provider"]["max_price"]["completion"],
         0.30

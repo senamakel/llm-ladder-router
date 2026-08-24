@@ -4,33 +4,44 @@ use crate::ladder::Chosen;
 
 /// Which request/response format a caller is speaking.
 ///
-/// Both marketplaces serve both chat formats natively, so the router relays
+/// Both marketplaces serve every chat format natively, so the router relays
 /// rather than translating: an Anthropic request reaches an Anthropic endpoint
-/// unchanged, and its response comes back unchanged. Translating between the
-/// two would lose fields on every round trip.
+/// unchanged, and its response comes back unchanged. Translating between them
+/// would lose fields on every round trip.
 ///
-/// Embeddings are a third format rather than a variation on the first: the
-/// request carries `input` instead of `messages`, the response carries vectors
-/// instead of choices, and no provider serves them on the Anthropic surface.
-/// Which providers serve which format is each dialect module's `serves`.
+/// Embeddings stand apart from the chat formats rather than being a variation
+/// on one of them: the request carries `input` instead of `messages`, the
+/// response carries vectors instead of choices, and no provider serves them on
+/// the Anthropic surface. Which providers serve which format is each dialect
+/// module's `serves`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wire {
     /// `OpenAI` chat completions.
     OpenAi,
     /// Anthropic messages.
     Anthropic,
+    /// `OpenAI` responses.
+    ///
+    /// A distinct surface rather than a flavour of [`Wire::OpenAi`]: it has its
+    /// own request shape (`input` rather than `messages`), its own response
+    /// shape, and its own spelling of reasoning depth. It is also the only
+    /// surface some agent harnesses speak — the `codex` harness posts to
+    /// `/responses` and nothing else, so without this it cannot reach the
+    /// router at all.
+    Responses,
     /// `OpenAI` embeddings.
     Embeddings,
 }
 
 impl Wire {
-    /// What to call this format in a message to a human.
+    /// The surface's name, for error messages a caller has to act on.
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub fn api_name(self) -> &'static str {
         match self {
-            Self::OpenAi => "OpenAI chat completions",
+            Self::OpenAi => "OpenAI Chat Completions",
             Self::Anthropic => "Anthropic Messages",
-            Self::Embeddings => "OpenAI embeddings",
+            Self::Responses => "OpenAI Responses",
+            Self::Embeddings => "OpenAI Embeddings",
         }
     }
 }
@@ -89,15 +100,23 @@ pub enum Disposition {
 /// - **The caller always wins.** A body that already carries `reasoning_effort`
 ///   or `reasoning` is left alone, so a request asking for a shallow answer is
 ///   not silently made expensive by the ladder it happened to select.
-/// - **Only on the `OpenAI` chat surface.** Anthropic spells this as a
+/// - **Only on the two `OpenAI` chat surfaces.** Anthropic spells this as a
 ///   `thinking` block with a token budget, and inventing one from an effort
 ///   word would be the router translating between dialects rather than
 ///   relaying. An embedding model does not reason at all, so the field would be
 ///   a 400 from a request that was otherwise fine.
 /// - **Nothing is inserted when no effort was declared**, so every ladder that
 ///   predates this field behaves exactly as it did.
+///
+/// The two `OpenAI` surfaces spell the same idea differently, and each is given
+/// its own spelling rather than one being sent to both: chat completions take a
+/// top-level `reasoning_effort` string, while responses take a `reasoning`
+/// object with an `effort` member. Sending the chat spelling to `/responses`
+/// puts an unknown top-level key in the body, which is the sort of thing an
+/// upstream is entitled to reject — and the depth the ladder paid for would
+/// silently not be bought.
 pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wire: Wire) {
-    if wire != Wire::OpenAi {
+    if matches!(wire, Wire::Anthropic | Wire::Embeddings) {
         return;
     }
     let Some(effort) = chosen.reasoning_effort.as_ref() else {
@@ -109,7 +128,26 @@ pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wir
     if object.contains_key("reasoning_effort") || object.contains_key("reasoning") {
         return;
     }
-    object.insert("reasoning_effort".to_string(), effort.clone().into());
+    match wire {
+        Wire::Responses => {
+            object.insert(
+                "reasoning".to_string(),
+                serde_json::json!({ "effort": effort.clone() }),
+            );
+        }
+        _ => {
+            object.insert("reasoning_effort".to_string(), effort.clone().into());
+        }
+    }
+}
+
+/// Whether an outgoing request asked for a streamed response.
+///
+/// A missing or non-boolean `stream` is not streaming, which matches every
+/// surface's own default.
+#[must_use]
+pub(crate) fn is_streaming(body: &serde_json::Value) -> bool {
+    body.get("stream").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
 /// Classifies an upstream response body by the marketplace-independent rules.

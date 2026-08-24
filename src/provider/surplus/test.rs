@@ -166,6 +166,71 @@ fn only_the_model_is_rewritten_in_the_body() {
 }
 
 #[test]
+fn the_developer_role_is_folded_to_system_on_the_chat_shape() {
+    let mut body = serde_json::json!({
+        "model": "flash",
+        "messages": [
+            { "role": "developer", "content": "be terse" },
+            { "role": "user", "content": "say OK" },
+        ],
+    });
+    apply_routing(&mut body, &chosen(None));
+
+    // Surplus 400s on `developer`, and a 400 does not advance the ladder, so
+    // an unfolded role is a Codex session that cannot reach this provider.
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["messages"][0]["content"], "be terse");
+    // Every other role is left exactly as the caller sent it.
+    assert_eq!(body["messages"][1]["role"], "user");
+}
+
+#[test]
+fn the_developer_role_is_folded_to_system_on_the_responses_shape() {
+    let mut body = serde_json::json!({
+        "model": "flash",
+        "input": [
+            { "role": "developer", "content": "be terse" },
+            { "role": "assistant", "content": "OK" },
+        ],
+    });
+    apply_routing(&mut body, &chosen(None));
+
+    assert_eq!(body["input"][0]["role"], "system");
+    assert_eq!(body["input"][1]["role"], "assistant");
+}
+
+#[test]
+fn a_body_with_nothing_to_fold_is_untouched() {
+    let original = serde_json::json!({
+        "model": "glm-5.2",
+        "messages": "not an array",
+        "input": [42, { "no_role": true }],
+    });
+    let mut body = original.clone();
+    apply_routing(&mut body, &chosen(None));
+
+    assert_eq!(body["messages"], original["messages"]);
+    assert_eq!(body["input"], original["input"]);
+}
+
+#[test]
+fn a_streaming_responses_request_is_refused_and_everything_else_is_served() {
+    // The one refusal: Surplus's responses stream stops before
+    // `response.output_item.done`, so a client reading it sees an empty turn.
+    assert!(!serves(Wire::Responses, true));
+
+    // Non-streaming responses is complete, and every other surface is
+    // unaffected either way - refusing more than the broken case would strand
+    // traffic Surplus serves perfectly well.
+    assert!(serves(Wire::Responses, false));
+    for wire in [Wire::OpenAi, Wire::Anthropic, Wire::Embeddings] {
+        for streaming in [true, false] {
+            assert!(serves(wire, streaming), "{wire:?} streaming={streaming}");
+        }
+    }
+}
+
+#[test]
 fn a_non_object_body_is_left_alone() {
     let mut body = serde_json::json!(42);
     apply_routing(&mut body, &chosen(Some(95)));

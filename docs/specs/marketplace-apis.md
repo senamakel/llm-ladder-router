@@ -33,6 +33,10 @@ slugs (`deepseek/deepseek-v4-flash`).
   **USD per Mtok**. This is enforced: an unsatisfiable cap returns
   **404 `No endpoints found that satisfy the max price for this request`**.
   Sub-provider preference is `provider.order` plus `allow_fallbacks: true`.
+- `POST /responses` serves the OpenAI Responses API natively, taking the same
+  `provider` object as `/chat/completions`. Reasoning depth is a `reasoning`
+  object with an `effort` member, not the top-level `reasoning_effort` string
+  that surface takes. Verified live 2026-08-23.
 
 `provider.only` is deliberately unused: an exclusive pin has been observed to
 leave requests hanging while idle sub-providers sat unused.
@@ -63,6 +67,11 @@ slugs (`glm-5.2`). OpenAI-compatible.
   plus `stats` and `recent_usage`. Spendable is `min(balance, allowance)`.
 - `POST /v1/chat/completions`, and `POST /min{N}/v1/chat/completions` for
   minimum-discount routing.
+- `POST /v1/responses`, and `POST /min{N}/v1/responses`, serving the OpenAI
+  Responses API. Note the prefix position: this surface sits under the same root
+  as chat completions with the prefix leading, **not** under the `/anthropic`
+  root the Messages surface uses. `POST /responses` (no `/v1`) is a 404.
+  Verified live 2026-08-23.
 - `POST /v1/embeddings`, with **no discounted form** — see below.
 
 Response headers worth capturing: `x-si-served-by`, `x-si-marketplace-status`
@@ -143,6 +152,52 @@ themselves be resellers, so the `provider` in the response body is the terminal
 upstream, not the seller that was matched. Local order-book filtering is
 therefore a sound way to *skip* a rung that clearly cannot fit, but it is not a
 guarantee about what the request will cost — only `/min{N}/` is.
+
+### The `developer` role is rejected on every surface
+
+Surplus's request schema predates the `developer` role and 400s on it:
+
+```text
+Failed to deserialize the JSON body into the target type:
+  messages[1].role: unknown variant `developer`,
+  expected one of `system`, `user`, `assistant`, `tool`
+```
+
+Verified 2026-08-23 against `/v1/chat/completions` and `/v1/responses` alike —
+the responses surface converts internally and reports the same complaint
+against `messages`. OpenRouter accepts the role on both.
+
+This matters because a 400 is a caller error and does **not** advance the
+ladder, so an unfolded `developer` message is not a step down to the next rung,
+it is the request failing outright. The `codex` harness opens every turn with
+one, so Codex sessions could not reach a Surplus rung at all.
+`surplus::apply_routing` therefore rewrites `developer` to `system` in both
+`messages` and `input` before dispatch. It is the one place the router edits a
+caller's content, and `developer` is `system` renamed, so nothing is lost.
+
+### The responses event stream is truncated
+
+Surplus's `/v1/responses` stream emits four event types and stops:
+
+```text
+response.created
+response.output_item.added
+response.output_text.delta
+response.completed        # its `response` carries no `output` array
+```
+
+There is no `response.output_item.done`. OpenRouter emits all nine. Verified
+2026-08-23; the non-streaming form of the same request is complete, so this is
+the stream alone.
+
+An agent client assembles its turn from the finished items, so it reads a turn
+with no output and ends silently — the model's answer arrives in the deltas and
+is discarded. That is worse than an error, because the run looks like it
+completed and produced nothing. Codex speaks only this surface, so the
+`serves(wire, streaming)` check in `surplus::mod` refuses a streaming responses
+request before the round trip and lets the ladder step down to OpenRouter,
+whose stream is complete. Every other surface, and the non-streaming form of
+this one, is served as before.
 
 ## Rung-advance signals
 

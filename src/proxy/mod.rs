@@ -98,11 +98,12 @@ pub fn build_with_credentials(
     };
 
     let app = axum::Router::new()
-        // The OpenAI surfaces, and the Anthropic Messages surface. All are
-        // relayed to the marketplaces' own native endpoints for that format
-        // rather than translated, so no field is lost in either direction.
+        // The three OpenAI surfaces, and the Anthropic Messages surface. All
+        // four are relayed to the marketplaces' own native endpoints for that
+        // format rather than translated, so no field is lost in any direction.
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/messages", post(messages))
+        .route("/v1/responses", post(responses))
         .route("/v1/embeddings", post(embeddings))
         .route("/v1/models", get(list_models))
         .route("/healthz", get(|| async { "ok" }))
@@ -207,6 +208,21 @@ async fn messages(
     route(state, &headers, body, Wire::Anthropic).await
 }
 
+/// The `OpenAI` Responses-compatible entry point.
+///
+/// Its own route rather than a variant of [`chat_completions`], because the two
+/// are different APIs that happen to share a vendor: the request names its
+/// prompt in `input` rather than `messages`, the response is a `response`
+/// object rather than a `chat.completion`, and reasoning depth is spelled
+/// differently in both.
+async fn responses(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    route(state, &headers, body, Wire::Responses).await
+}
+
 /// The `OpenAI`-compatible embeddings entry point.
 ///
 /// The same ladder machinery, on a body the router does not otherwise look
@@ -250,7 +266,7 @@ fn authorized(state: &State, headers: &HeaderMap) -> bool {
 /// wire format.
 fn serves(surface: Surface, wire: Wire) -> bool {
     match surface {
-        Surface::Chat => matches!(wire, Wire::OpenAi | Wire::Anthropic),
+        Surface::Chat => matches!(wire, Wire::OpenAi | Wire::Anthropic | Wire::Responses),
         Surface::Embeddings => wire == Wire::Embeddings,
     }
 }
@@ -309,7 +325,7 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
             &format!(
                 "ladder {name} serves the {} surface, not {}",
                 surface_name(ladder_config.surface),
-                wire.name()
+                wire.api_name()
             ),
             &[],
         );

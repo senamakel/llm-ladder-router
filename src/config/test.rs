@@ -363,7 +363,7 @@ fn the_shipped_example_config_is_valid() {
     // ships, and a container that binds loopback answers nobody.
     assert_eq!(config.server.bind, "0.0.0.0:6969");
 
-    // The example is the documentation for the five ladders the router ships
+    // The example is the documentation for the six ladders the router ships
     // with; a change to any of them should be deliberate.
     assert_eq!(
         config
@@ -403,6 +403,23 @@ fn the_shipped_example_config_is_valid() {
     assert_eq!(scribe.rungs[0].model, "labs-leanstral-1-5");
     assert!(config.cap_for(scribe, &scribe.rungs[0]).is_none());
     assert!(!config.providers["mistral"].kind.is_marketplace());
+
+    // Two rungs, one model: the priced one first, the house it comes from
+    // behind it as the rung that cannot be outbid, only fallen back to.
+    let uncensored = config.ladder("uncensored").unwrap();
+    assert_eq!(
+        uncensored
+            .rungs
+            .iter()
+            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("surplus", "venice-uncensored-1.2"),
+            ("venice", "venice-uncensored-1-2"),
+        ]
+    );
+    assert!(config.cap_for(uncensored, &uncensored.rungs[1]).is_none());
+    assert!(!config.providers["venice"].kind.is_marketplace());
 
     // The embeddings ladder, on its own surface and deliberately uncapped:
     // no marketplace publishes a price filter there, so a ceiling would be
@@ -616,6 +633,32 @@ fn only_the_marketplaces_are_marketplaces() {
     assert!(ProviderKind::OpenRouter.is_marketplace());
     assert!(ProviderKind::Surplus.is_marketplace());
     assert!(!ProviderKind::Mistral.is_marketplace());
+    assert!(!ProviderKind::Venice.is_marketplace());
+}
+
+/// Venice is direct too, so the same refusal applies to a ceiling on it.
+#[test]
+fn a_ceiling_on_venice_is_refused() {
+    let error = Config::parse(
+        r#"
+        [providers.venice]
+        kind = "venice"
+        base_url = "https://api.venice.ai"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "uncensored"
+          [[ladders.rungs]]
+          provider = "venice"
+          model = "venice-uncensored-1-2"
+          max_cost_per_1m = 0.50
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&error, Error::UnpriceableCeiling { provider, .. } if provider == "venice"),
+        "unexpected error: {error}"
+    );
 }
 
 /// The shipped multipliers must express the ladders' intent, not just parse.

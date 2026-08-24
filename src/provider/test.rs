@@ -204,6 +204,14 @@ async fn upstream() -> String {
                 axum::Json(serde_json::json!({ "sent": body.0 }))
             }),
         )
+        // Venice's own path, which roots its version at `/api/v1`. Echoes the
+        // body for the same reason.
+        .route(
+            "/api/v1/chat/completions",
+            post(|body: axum::Json<serde_json::Value>| async move {
+                axum::Json(serde_json::json!({ "sent": body.0 }))
+            }),
+        )
         .route(
             "/messages",
             post(|headers: axum::http::HeaderMap| async move {
@@ -214,6 +222,24 @@ async fn upstream() -> String {
                         .unwrap_or_default(),
                 }))
             }),
+        )
+        // The OpenAI responses surface. Echoes both the body and the version
+        // header, so a test can see the rewrite and see that this surface is
+        // not mistaken for the Anthropic one.
+        .route(
+            "/responses",
+            post(
+                |headers: axum::http::HeaderMap, body: axum::Json<serde_json::Value>| async move {
+                    axum::Json(serde_json::json!({
+                        "provider": "DeepInfra",
+                        "sent": body.0,
+                        "anthropic_version": headers
+                            .get("anthropic-version")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default(),
+                    }))
+                },
+            ),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -316,6 +342,33 @@ async fn the_anthropic_surface_sends_the_version_header() {
     assert_eq!(body["anthropic_version"], "2023-06-01");
 }
 
+/// The responses surface reaches the responses endpoint, carries the
+/// credential, and must not pick up the Anthropic version header on the way.
+#[tokio::test]
+async fn the_responses_surface_reaches_the_responses_endpoint() {
+    let client = openrouter_client(&upstream().await);
+
+    let dispatched = client
+        .infer(
+            &chosen(),
+            Wire::Responses,
+            &serde_json::json!({ "model": "flash", "input": "hello" }),
+        )
+        .await
+        .unwrap();
+
+    assert!(dispatched.status.is_success());
+    let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
+    // The ladder name the caller sent is replaced by the rung's model...
+    assert_eq!(echoed["sent"]["model"], "deepseek/deepseek-v4-flash");
+    // ...the prompt is relayed untouched...
+    assert_eq!(echoed["sent"]["input"], "hello");
+    // ...and this is not the Anthropic surface.
+    assert_eq!(echoed["anthropic_version"], "");
+    assert_eq!(dispatched.served_by, Some("DeepInfra".to_string()));
+    assert_eq!(client.classify(&dispatched), Disposition::Served);
+}
+
 #[tokio::test]
 async fn an_unreachable_upstream_is_reported_as_an_upstream_error() {
     // Port 1 on loopback refuses connections immediately.
@@ -389,12 +442,86 @@ fn the_anthropic_surface_is_left_alone() {
     assert!(body.get("reasoning_effort").is_none());
 }
 
+/// An embedding model does not reason, so a ladder's declared depth stops at
+/// this surface rather than becoming a 400 on a request that was otherwise
+/// fine.
+#[test]
+fn the_embeddings_surface_is_left_alone() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("high".to_string());
+    let mut body = serde_json::json!({ "input": "hello" });
+
+    apply_reasoning_effort(&mut body, &chosen, Wire::Embeddings);
+
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("reasoning").is_none());
+}
+
 /// A ladder that declares nothing changes nothing.
 #[test]
 fn no_declared_effort_inserts_nothing() {
     let mut body = serde_json::json!({ "messages": [] });
     apply_reasoning_effort(&mut body, &chosen(), Wire::OpenAi);
     assert!(body.get("reasoning_effort").is_none());
+}
+
+/// The responses surface spells depth as a `reasoning` object. Sending the chat
+/// spelling would leave an unknown top-level key in the body and buy none of
+/// the depth the ladder declared.
+#[test]
+fn a_declared_effort_takes_the_responses_spelling_on_that_surface() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("high".to_string());
+    let mut body = serde_json::json!({ "model": "reasoning", "input": "hello" });
+
+    apply_reasoning_effort(&mut body, &chosen, Wire::Responses);
+
+    assert_eq!(body["reasoning"]["effort"], "high");
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "the chat-completions spelling must not also be sent"
+    );
+}
+
+/// The caller wins on the responses surface too, in either spelling.
+#[test]
+fn a_callers_own_depth_survives_on_the_responses_surface() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("xhigh".to_string());
+
+    let mut structured = serde_json::json!({ "input": "", "reasoning": { "effort": "low" } });
+    apply_reasoning_effort(&mut structured, &chosen, Wire::Responses);
+    assert_eq!(structured["reasoning"]["effort"], "low");
+
+    let mut flat = serde_json::json!({ "input": "", "reasoning_effort": "low" });
+    apply_reasoning_effort(&mut flat, &chosen, Wire::Responses);
+    assert!(flat.get("reasoning").is_none());
+}
+
+/// Each surface is relayed to the marketplace's own native endpoint for that
+/// format, so no field is lost translating between them.
+#[test]
+fn each_surface_maps_to_its_own_native_path() {
+    assert_eq!(
+        openrouter::inference_path(Wire::OpenAi),
+        "/chat/completions"
+    );
+    assert_eq!(openrouter::inference_path(Wire::Anthropic), "/messages");
+    assert_eq!(openrouter::inference_path(Wire::Responses), "/responses");
+
+    let mut capped = chosen();
+    capped.min_discount_pct = Some(40);
+    // Surplus puts the responses surface under the same root as chat
+    // completions, not under the `/anthropic` one, and takes the discount
+    // prefix in the same leading position.
+    assert_eq!(
+        surplus::inference_path(&chosen(), Wire::Responses),
+        "/v1/responses"
+    );
+    assert_eq!(
+        surplus::inference_path(&capped, Wire::Responses),
+        "/min40/v1/responses"
+    );
 }
 
 /// The upstream's own backoff is read when it gives one, and only in the form
@@ -515,30 +642,221 @@ async fn a_direct_provider_serves_the_embeddings_surface() {
     assert_eq!(echoed["sent"]["input"], "hello");
 }
 
-/// There is no Anthropic surface here, so the request is declined before the
-/// round trip. The failover loop reads that as this rung's failure and takes
-/// the next one.
+/// Only the chat-completions and embeddings surfaces exist here, so a request
+/// on either of the others is declined before the round trip. The failover loop
+/// reads that as this rung's failure and takes the next one.
+///
+/// The declined surface is named in the error rather than assumed: a caller
+/// told "mistral does not serve the Anthropic Messages API" when they posted to
+/// `/v1/responses` would go looking in the wrong place.
 #[tokio::test]
-async fn a_direct_provider_declines_the_anthropic_surface() {
+async fn a_direct_provider_declines_every_surface_it_does_not_publish() {
     let client = mistral_client(&upstream().await);
+
+    for (declined, expected) in [
+        (Wire::Anthropic, "Anthropic Messages"),
+        (Wire::Responses, "OpenAI Responses"),
+    ] {
+        match client
+            .infer(
+                &scribe_rung(),
+                declined,
+                &serde_json::json!({ "input": "" }),
+            )
+            .await
+        {
+            Err(Error::UnsupportedWire { provider, wire }) => {
+                assert_eq!(provider, "mistral");
+                assert_eq!(wire, expected);
+            }
+            other => panic!("expected UnsupportedWire for {declined:?}, got {other:?}"),
+        }
+    }
+}
+
+/// Surplus publishes the responses surface but its event stream is truncated,
+/// so only the *streaming* form is declined - before the round trip, which is
+/// what lets the failover loop take a rung whose stream is complete.
+///
+/// The narrowness is the point, and is asserted in both directions: refusing
+/// the non-streaming form too would strand traffic Surplus serves correctly,
+/// including the cheapest rungs on every ladder.
+#[tokio::test]
+async fn surplus_declines_only_a_streaming_responses_request() {
+    let base = upstream().await;
+    let client = Client::with_credential(
+        "surplus",
+        Provider {
+            kind: ProviderKind::Surplus,
+            base_url: base,
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    );
 
     match client
         .infer(
-            &scribe_rung(),
+            &surplus_rung(),
+            Wire::Responses,
+            &serde_json::json!({ "stream": true, "input": [] }),
+        )
+        .await
+    {
+        Err(Error::UnsupportedWire { provider, wire }) => {
+            assert_eq!(provider, "surplus");
+            // Named precisely: a caller told merely "does not serve the OpenAI
+            // Responses API" would conclude the surface is absent, and it is
+            // not - only its stream is unusable.
+            assert_eq!(wire, "streaming OpenAI Responses");
+        }
+        other => panic!("expected UnsupportedWire, got {other:?}"),
+    }
+
+    // Everything else still dispatches. The mock has no route for these, so
+    // what is being asserted is that a request went out at all rather than
+    // being refused locally.
+    for (wire, body) in [
+        (Wire::Responses, serde_json::json!({ "input": [] })),
+        (
+            Wire::Responses,
+            serde_json::json!({ "stream": false, "input": [] }),
+        ),
+        (
+            Wire::OpenAi,
+            serde_json::json!({ "stream": true, "messages": [] }),
+        ),
+        (
+            Wire::Anthropic,
+            serde_json::json!({ "stream": true, "messages": [] }),
+        ),
+    ] {
+        assert!(
+            client.infer(&surplus_rung(), wire, &body).await.is_ok(),
+            "{wire:?} with stream={:?} should have been dispatched",
+            body.get("stream")
+        );
+    }
+}
+
+fn surplus_rung() -> Chosen {
+    Chosen {
+        rung: 0,
+        provider: "surplus".to_string(),
+        model: "deepseek-v4-flash".to_string(),
+        cap_per_1m: None,
+        admitted: Vec::new(),
+        cheapest_per_1m: None,
+        min_discount_pct: None,
+        prefer: Vec::new(),
+        reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: None,
+    }
+}
+
+fn venice_client(base_url: &str) -> Client {
+    Client::with_credential(
+        "venice",
+        Provider {
+            kind: ProviderKind::Venice,
+            base_url: base_url.to_string(),
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    )
+}
+
+fn uncensored_rung() -> Chosen {
+    Chosen {
+        rung: 1,
+        provider: "venice".to_string(),
+        model: "venice-uncensored-1-2".to_string(),
+        cap_per_1m: None,
+        admitted: Vec::new(),
+        cheapest_per_1m: None,
+        min_discount_pct: None,
+        prefer: Vec::new(),
+        reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: None,
+    }
+}
+
+/// Venice is direct for the same reasons Mistral is, and answers the same way
+/// when asked for market data it does not publish.
+#[tokio::test]
+async fn venice_publishes_neither_prices_nor_a_balance() {
+    let client = venice_client(&upstream().await);
+    assert!(!client.is_marketplace());
+
+    match client.fetch_prices("venice-uncensored-1-2").await {
+        Err(Error::NoMarketData { provider, what }) => {
+            assert_eq!(provider, "venice");
+            assert_eq!(what, "order book");
+        }
+        other => panic!("expected NoMarketData, got {other:?}"),
+    }
+
+    match client.fetch_balance().await {
+        Err(Error::NoMarketData { provider, what }) => {
+            assert_eq!(provider, "venice");
+            assert_eq!(what, "balance");
+        }
+        other => panic!("expected NoMarketData, got {other:?}"),
+    }
+}
+
+/// The rewrite that matters on this provider travels with the request: the
+/// model, and the refusal of Venice's house system prompt.
+#[tokio::test]
+async fn venice_serves_the_openai_surface_without_its_house_system_prompt() {
+    let client = venice_client(&upstream().await);
+
+    let dispatched = client
+        .infer(
+            &uncensored_rung(),
+            Wire::OpenAi,
+            &serde_json::json!({ "model": "uncensored", "messages": [] }),
+        )
+        .await
+        .unwrap();
+
+    assert!(dispatched.status.is_success());
+    let echoed: serde_json::Value = serde_json::from_slice(&dispatched.body).unwrap();
+    assert_eq!(echoed["sent"]["model"], "venice-uncensored-1-2");
+    assert_eq!(
+        echoed["sent"]["venice_parameters"]["include_venice_system_prompt"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn venice_declines_the_anthropic_surface() {
+    let client = venice_client(&upstream().await);
+
+    match client
+        .infer(
+            &uncensored_rung(),
             Wire::Anthropic,
             &serde_json::json!({ "messages": [] }),
         )
         .await
     {
         Err(Error::UnsupportedWire { provider, wire }) => {
-            assert_eq!(provider, "mistral");
+            assert_eq!(provider, "venice");
             assert_eq!(wire, "Anthropic Messages");
         }
         other => panic!("expected UnsupportedWire, got {other:?}"),
     }
 }
 
-/// The marketplaces both poll; the direct endpoint is the one that does not.
+/// The marketplaces both poll; the direct endpoints are the ones that do not.
 #[test]
 fn only_the_marketplaces_are_polled_for_market_data() {
     for kind in [ProviderKind::OpenRouter, ProviderKind::Surplus] {
@@ -550,4 +868,18 @@ fn only_the_marketplaces_are_polled_for_market_data() {
         );
         assert!(client.is_marketplace());
     }
+}
+
+#[test]
+fn only_an_explicit_true_counts_as_a_streaming_request() {
+    use crate::provider::types::is_streaming;
+
+    assert!(is_streaming(&serde_json::json!({ "stream": true })));
+    // A missing, false, or non-boolean `stream` is every surface's own
+    // default, and reading it as streaming would refuse a Surplus rung that
+    // can serve the request perfectly well.
+    assert!(!is_streaming(&serde_json::json!({ "stream": false })));
+    assert!(!is_streaming(&serde_json::json!({ "stream": "true" })));
+    assert!(!is_streaming(&serde_json::json!({})));
+    assert!(!is_streaming(&serde_json::json!(42)));
 }

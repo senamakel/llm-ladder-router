@@ -206,10 +206,14 @@ async fn the_ladders_are_listed_as_models() {
 fn a_surface_answers_only_its_own_wire_formats() {
     assert!(serves(Surface::Chat, Wire::OpenAi));
     assert!(serves(Surface::Chat, Wire::Anthropic));
+    // Responses is a chat surface too: a different request shape for the same
+    // conversation, which the same ladder of chat models can answer.
+    assert!(serves(Surface::Chat, Wire::Responses));
     assert!(!serves(Surface::Chat, Wire::Embeddings));
 
     assert!(serves(Surface::Embeddings, Wire::Embeddings));
     assert!(!serves(Surface::Embeddings, Wire::OpenAi));
+    assert!(!serves(Surface::Embeddings, Wire::Responses));
     // There is no Anthropic embeddings format to serve.
     assert!(!serves(Surface::Embeddings, Wire::Anthropic));
 
