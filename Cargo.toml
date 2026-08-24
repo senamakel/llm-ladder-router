@@ -48,7 +48,7 @@ serde = { version = "1", features = ["derive"] }
 # survive the round trip unchanged.
 serde_json = "1"
 # `config.toml` parsing.
-toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 # Human-readable durations (`"15m"`) in `config.toml`.
 humantime-serde = "1"
 # Structured routing decisions: which rung served, at what price, and why the
