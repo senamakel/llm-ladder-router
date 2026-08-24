@@ -168,6 +168,33 @@ pub fn classify(status: reqwest::StatusCode, body: &[u8]) -> Disposition {
         return Disposition::Advance;
     }
 
+    // A sub-provider rejecting the request's SHAPE, relayed as a 400. This is
+    // not the caller's mistake and it is not uniform across rungs, which is the
+    // assumption `classify_status` makes when it refuses to advance on a 400:
+    // that the request is the same everywhere, so every rung would refuse it
+    // identically. Surplus resells many sub-providers behind one endpoint and
+    // they do not all accept the same dialect - one that only takes a string
+    // `content` answers an Anthropic block array with
+    //
+    //   {"error":"2 request validation errors: Input should be a valid string,
+    //             field: 'messages[1].content.str', ...}
+    //
+    // while the very next rung serves the identical body. On 2026-08-24 that
+    // stopped every `reasoning` and `max-reasoning` request from Claude Code
+    // for about five hours: each one carries a `<system-reminder>` block array,
+    // each was refused by one sub-provider, and the ladder handed the 400 back
+    // instead of stepping to a rung that would have served it. `flash` was
+    // unaffected only because its rungs happened to sit on other sub-providers.
+    //
+    // Matched narrowly on purpose. A 400 that Surplus itself raises about the
+    // request - `invalid_request_error` and its neighbours - is still a caller
+    // error and still stops the ladder, because that one IS uniform.
+    if status == reqwest::StatusCode::BAD_REQUEST
+        && (text.contains("request validation errors") || text.contains("Provider returned"))
+    {
+        return Disposition::Advance;
+    }
+
     super::types::classify_status(status)
 }
 
