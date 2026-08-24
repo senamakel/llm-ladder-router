@@ -34,10 +34,12 @@ fn only_the_model_is_rewritten() {
 }
 
 #[test]
-fn the_openai_surface_is_the_only_one() {
+fn the_openai_surfaces_serve_and_anthropic_does_not() {
     assert!(serves(Wire::OpenAi));
+    assert!(serves(Wire::Embeddings));
     assert!(!serves(Wire::Anthropic));
-    assert_eq!(inference_path(), "/v1/chat/completions");
+    assert_eq!(inference_path(Wire::OpenAi), "/v1/chat/completions");
+    assert_eq!(inference_path(Wire::Embeddings), "/v1/embeddings");
 }
 
 /// A rate limit or an outage advances the ladder; a request the caller got
