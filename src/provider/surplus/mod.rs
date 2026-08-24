@@ -68,6 +68,15 @@ impl MarketOffer {
     /// is a worse answer than no price at all. An offer that publishes neither
     /// form is left at zero, exactly as a chat offer with missing fields is
     /// today — the marketplace does carry genuinely free models.
+    ///
+    /// The caller decides what `media` is, which is how a seller quoting no
+    /// price of its own falls back to the undiscounted one rather than to zero:
+    /// five of the 175 live offers on `venice-embed-1` are in that state, and
+    /// one usable seller reading as free is enough to make the whole rung's
+    /// floor zero and rank it ahead of every priced rung it competes with. The
+    /// direct price is the honest reading of "this seller published no
+    /// discount", and it errs upward, which is the safe direction for a number
+    /// a ceiling is compared against.
     fn per_1m(&self, per_token: Option<f64>, media: Option<f64>) -> f64 {
         let per_token = per_token.unwrap_or(0.0);
         if per_token > 0.0 {
@@ -105,8 +114,9 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
         .offers
         .into_iter()
         .map(|offer| {
-            let prompt = offer.per_1m(offer.price_input_per_1m, offer.media_unit_price);
-            let completion = offer.per_1m(offer.price_output_per_1m, offer.media_unit_price);
+            let quoted = offer.media_unit_price.or(offer.direct_media_unit_price);
+            let prompt = offer.per_1m(offer.price_input_per_1m, quoted);
+            let completion = offer.per_1m(offer.price_output_per_1m, quoted);
             let direct = offer.per_1m(offer.direct_output_per_1m, offer.direct_media_unit_price);
             Offer {
                 provider: offer.provider.clone().unwrap_or_else(|| "unknown".to_string()),

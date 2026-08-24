@@ -281,22 +281,24 @@ fn a_media_unit_that_is_not_tokens_is_not_read_as_a_token_price() {
     assert_eq!(offer.direct_completion_per_1m, None);
 }
 
-/// A seller that publishes no price at all in either form is left where a chat
-/// offer with missing fields is left: at zero. The marketplace does carry
-/// genuinely free models, so inventing a price would be the worse guess.
+/// A seller quoting no price of its own is reading as undiscounted, not as
+/// free. One usable seller at zero would otherwise drag the whole rung's floor
+/// to zero and rank it ahead of every priced rung it competes with.
 #[test]
-fn an_offer_publishing_neither_price_form_stays_at_zero() {
+fn a_seller_quoting_no_price_of_its_own_is_read_as_undiscounted() {
     let prices = parse_order_book(EMBEDDINGS_ORDER_BOOK.as_bytes()).unwrap();
-    let unpriced = prices
+    let unquoted = prices
         .offers
         .iter()
         .find(|offer| offer.provider == "Morpheus")
         .expect("the fixture carries one seller with no media unit price");
 
-    assert!(unpriced.completion_per_1m.abs() < f64::EPSILON, "{unpriced:?}");
-    // The direct price it is quoted against was published, so a ceiling still
-    // has something to be restated against.
-    assert!((unpriced.direct_completion_per_1m.unwrap() - 0.02).abs() < 1e-9);
+    // The direct price, 20000 micro-USD per Mtok, rather than zero.
+    assert!(
+        (unquoted.completion_per_1m - 0.02).abs() < 1e-9,
+        "{unquoted:?}"
+    );
+    assert!((unquoted.direct_completion_per_1m.unwrap() - 0.02).abs() < 1e-9);
 }
 
 /// Every prefixed spelling of the embeddings path 404s on the live API, so a
