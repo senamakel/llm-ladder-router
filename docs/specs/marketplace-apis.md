@@ -1,6 +1,7 @@
 # Marketplace APIs
 
-Everything here was verified against the live APIs on 2026-08-18. Where a
+Everything here was verified against the live APIs on 2026-08-18, and the
+embeddings sections on 2026-08-24. Where a
 documented feature does not behave as documented, the observed behavior wins and
 the discrepancy is recorded — the router is built against what the servers do.
 
@@ -52,6 +53,7 @@ slugs (`glm-5.2`). OpenAI-compatible.
   plus `stats` and `recent_usage`. Spendable is `min(balance, allowance)`.
 - `POST /v1/chat/completions`, and `POST /min{N}/v1/chat/completions` for
   minimum-discount routing.
+- `POST /v1/embeddings`, with **no discounted form** — see below.
 
 Response headers worth capturing: `x-si-served-by`, `x-si-marketplace-status`
 (`served` / `filtered`), `x-si-marketplace-attempts`, `x-si-provider-family`,
@@ -85,6 +87,43 @@ a per-request dollar ceiling.
 This finding invalidates the premise of riemann's Surplus budget ladder, which
 sends `max_price_per_1m` and expects rungs to advance when no seller fits. They
 never advance on price.
+
+### Embeddings serve, but carry no price filter and no token prices
+
+`venice-embed-1` is the one embedding model in the catalogue: `modality:
+embedding`, `supported_parameters: ["embedding"]`, 175 offers, 173 of them
+available and healthy. `POST /v1/embeddings` answers (402 `x402_payment_required`
+unauthenticated, which is the same "route exists, pay first" answer the chat path
+gives).
+
+**No spelling of the discount prefix exists on this surface.** All three 404 on
+the same run where `/min50/v1/chat/completions` answered 400 for a chat-shaped
+body — a route that exists, rejecting the payload:
+
+| Path | Status |
+| --- | --- |
+| `/v1/embeddings` | 402 (serves) |
+| `/min50/v1/embeddings` | 404 |
+| `/v1/min50/embeddings` | 404 |
+| `/embeddings/min50` | 404 |
+
+So a dollar ceiling cannot be restated as anything on the embeddings surface,
+and the router refuses one at load time rather than carrying a number that binds
+nothing.
+
+**The prices are not in the token fields.** Every one of the 175 offers reports
+`price_input_per_1m` and `price_output_per_1m` as `0`; the real figure is in
+`media_unit_price` with `media_unit: "1M tokens"`, against a
+`direct_media_unit_price` of `20000` (= $0.02/Mtok). Read naively, that is a
+market of 173 free sellers, which would give an embeddings rung a floor of zero
+and rank it ahead of every priced rung beside it. The router reads
+`media_unit_price` when the unit is `1M tokens`, and only then — the same field
+prices an image model per image.
+
+Five of the 175 offers publish no `media_unit_price` of their own while still
+carrying the `direct_media_unit_price`. One usable seller at zero is enough to
+drag the whole rung's floor to zero, so those are read at the direct price:
+"published no discount" is the honest reading, and it errs upward.
 
 ### The served provider is not necessarily an order-book seller
 
