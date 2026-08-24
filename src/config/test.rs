@@ -650,3 +650,102 @@ fn the_shipped_multipliers_keep_each_ladder_about_what_it_is_for() {
         "the throughput ladder has grown a {spread}x quality preference"
     );
 }
+
+/// An embeddings ladder is a different surface, not a different price band, and
+/// the router has to know which endpoint it answers on.
+#[test]
+fn a_ladder_declares_the_surface_it_answers_on() {
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "vectors"
+        surface = "embeddings"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-embed-1"
+
+        [[ladders]]
+        name = "prose"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.2"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.ladder("vectors").unwrap().surface, Surface::Embeddings);
+    // Unset means chat, so every ladder written before embeddings existed keeps
+    // behaving exactly as it did.
+    assert_eq!(config.ladder("prose").unwrap().surface, Surface::Chat);
+}
+
+/// No marketplace publishes a price filter for embeddings — Surplus's
+/// `/min{N}/` prefix 404s there — so a ceiling on that surface is a number that
+/// reads like a limit and binds nothing.
+#[test]
+fn rejects_a_ceiling_on_an_embeddings_rung() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "vectors"
+        surface = "embeddings"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-embed-1"
+          max_cost_per_1m = 0.30
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(&error, Error::UncappableSurface { field } if field.contains("vectors")),
+        "{error:?}"
+    );
+}
+
+/// A provider ceiling was written for the chat ladders and is inherited by an
+/// embeddings rung by accident. Dropping it beats skipping every rung for want
+/// of a filter that does not exist.
+#[test]
+fn an_embeddings_rung_does_not_inherit_the_providers_ceiling() {
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+        max_cost_per_1m = 1.00
+
+        [[ladders]]
+        name = "vectors"
+        surface = "embeddings"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-embed-1"
+
+        [[ladders]]
+        name = "prose"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.2"
+        "#,
+    )
+    .unwrap();
+
+    let vectors = config.ladder("vectors").unwrap();
+    assert_eq!(config.cap_for(vectors, &vectors.rungs[0]), None);
+
+    // The same provider ceiling still binds on the chat ladder beside it.
+    let prose = config.ladder("prose").unwrap();
+    assert_eq!(config.cap_for(prose, &prose.rungs[0]), Some(1.00));
+}
