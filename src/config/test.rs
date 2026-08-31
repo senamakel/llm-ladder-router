@@ -52,6 +52,10 @@ name = "reasoning"
   [[ladders.rungs]]
   provider = "surplus"
   model = "deepseek-v4-pro"
+
+  [ladders.fallback]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
 "#;
 
 #[test]
@@ -83,6 +87,70 @@ fn parses_a_full_configuration() {
     assert_eq!(flash.cost_basis, CostBasis::Completion);
     assert_eq!(flash.rungs.len(), 2);
     assert_eq!(flash.rungs[1].prefer, vec!["deepinfra"]);
+
+    let fallback = config
+        .ladder("reasoning")
+        .unwrap()
+        .fallback
+        .as_ref()
+        .unwrap();
+    assert_eq!(fallback.provider, "surplus");
+    assert_eq!(fallback.model, "deepseek-v4-flash");
+}
+
+#[test]
+fn rejects_a_fallback_with_a_price_ceiling() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "http://127.0.0.1:1"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "only"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "regular"
+
+          [ladders.fallback]
+          provider = "surplus"
+          model = "emergency"
+          max_cost_per_1m = 1.0
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, Error::FallbackCeiling { .. }));
+}
+
+#[test]
+fn rejects_a_fallback_naming_an_unknown_provider() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "http://127.0.0.1:1"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "only"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "regular"
+
+          [ladders.fallback]
+          provider = "missing"
+          model = "emergency"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::UnknownFallbackProvider { ladder, provider }
+            if ladder == "only" && provider == "missing"
+    ));
 }
 
 #[test]

@@ -25,6 +25,14 @@ use crate::credits::CreditState;
 use crate::pricing::PriceTable;
 use crate::session::{Pin, PinRejected};
 
+/// One configured rung considered by the selection engine.
+#[derive(Clone, Copy)]
+struct Candidate<'a> {
+    rung: &'a Rung,
+    index: usize,
+    cap: Option<f64>,
+}
+
 /// Ranks a ladder's rungs and picks the best one that can serve the request.
 ///
 /// `exclude` holds the positions of rungs already tried and failed during this
@@ -94,7 +102,18 @@ pub fn select_pinned(
             continue;
         }
 
-        match admit(config, ladder, prices, credits, cooldowns, rung, index) {
+        match admit(
+            config,
+            ladder,
+            prices,
+            credits,
+            cooldowns,
+            Candidate {
+                rung,
+                index,
+                cap: config.cap_for(ladder, rung),
+            },
+        ) {
             Ok(chosen) => candidates.push(chosen),
             Err(reason) => skipped.push(Skipped {
                 rung: index,
@@ -105,9 +124,40 @@ pub fn select_pinned(
         }
     }
 
+    let chosen = candidates.into_iter().min_by(rank).or_else(|| {
+        let index = ladder.rungs.len();
+        let fallback = ladder.fallback.as_ref()?;
+        if exclude.contains(&index) {
+            return None;
+        }
+        match admit(
+            config,
+            ladder,
+            prices,
+            credits,
+            cooldowns,
+            Candidate {
+                rung: fallback,
+                index,
+                cap: None,
+            },
+        ) {
+            Ok(chosen) => Some(chosen),
+            Err(reason) => {
+                skipped.push(Skipped {
+                    rung: index,
+                    provider: fallback.provider.clone(),
+                    model: fallback.model.clone(),
+                    reason,
+                });
+                None
+            }
+        }
+    });
+
     Selection {
         skipped,
-        chosen: candidates.into_iter().min_by(rank),
+        chosen,
         pin_rejected,
         pinned: false,
     }
@@ -144,8 +194,19 @@ fn honor(
         return Ok(None);
     }
 
-    let mut chosen = admit(config, ladder, prices, credits, cooldowns, rung, pin.rung)
-        .map_err(|_| PinRejected::RungUnavailable)?;
+    let mut chosen = admit(
+        config,
+        ladder,
+        prices,
+        credits,
+        cooldowns,
+        Candidate {
+            rung,
+            index: pin.rung,
+            cap: config.cap_for(ladder, rung),
+        },
+    )
+    .map_err(|_| PinRejected::RungUnavailable)?;
 
     // Steer back to the sub-provider holding the warm cache, but only if the
     // ceiling still admits it — otherwise the pin would smuggle in a seller the
@@ -179,9 +240,9 @@ fn admit(
     prices: &PriceTable,
     credits: &CreditState,
     cooldowns: &Cooldowns,
-    rung: &Rung,
-    index: usize,
+    candidate: Candidate<'_>,
 ) -> Result<Chosen, SkipReason> {
+    let Candidate { rung, index, cap } = candidate;
     // A provider missing from the map is rejected at load time, so this only
     // guards against a caller assembling a `Config` by hand.
     let Some(provider) = config.providers.get(&rung.provider) else {
@@ -208,7 +269,6 @@ fn admit(
         });
     }
 
-    let cap = config.cap_for(ladder, rung);
     let Some(model_prices) = prices.get(&rung.provider, &rung.model) else {
         // Without a ceiling there is nothing to check prices against, so a
         // missing snapshot is not a reason to refuse to try.

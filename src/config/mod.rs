@@ -58,6 +58,8 @@ impl Config {
     ///   or one of its rungs, where no order book exists to check it against.
     /// - [`Error::UncappableSurface`] if a ceiling is set on a rung of an
     ///   embeddings ladder, where no marketplace publishes a price filter.
+    /// - [`Error::FallbackCeiling`] if an ultimate fallback declares a ceiling,
+    ///   which it would intentionally bypass.
     /// - [`Error::Empty`] if a declared `reasoning_effort` is blank, which would
     ///   otherwise reach an upstream as an empty string and be rejected there.
     fn validate(&self) -> Result<()> {
@@ -145,6 +147,27 @@ impl Config {
                         field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
                     });
                 }
+            }
+            if let Some(fallback) = &ladder.fallback {
+                if !self.providers.contains_key(&fallback.provider) {
+                    return Err(Error::UnknownFallbackProvider {
+                        ladder: ladder.name.clone(),
+                        provider: fallback.provider.clone(),
+                    });
+                }
+                if fallback.max_cost_per_1m.is_some() {
+                    return Err(Error::FallbackCeiling {
+                        field: format!("ladder {} fallback max_cost_per_1m", ladder.name),
+                    });
+                }
+                check_effort(
+                    fallback.reasoning_effort.as_deref(),
+                    &format!("ladder {} fallback reasoning_effort", ladder.name),
+                )?;
+                check_price(
+                    fallback.score_multiplier,
+                    &format!("ladder {} fallback score_multiplier", ladder.name),
+                )?;
             }
         }
 
