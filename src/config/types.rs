@@ -428,6 +428,13 @@ pub struct Ladder {
     pub reasoning_effort: Option<String>,
     /// The rungs, tried first to last.
     pub rungs: Vec<Rung>,
+    /// An uncapped rung attempted only after every normal rung is unavailable
+    /// or has failed upstream.
+    ///
+    /// It never participates in normal ranking and does not inherit any
+    /// provider ceiling, but it remains subject to credential, balance,
+    /// cooldown, and wire-format availability checks.
+    pub fallback: Option<Rung>,
 }
 
 impl Ladder {

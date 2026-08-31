@@ -215,6 +215,31 @@ that *is* tried and fails upstream drops out and the next-best rung takes the
 request; a request the caller got wrong is returned as-is rather than replayed
 and charged again at every rung.
 
+### Ultimate fallback
+
+When a 502 is less useful than paying the current market price, give a ladder
+one `fallback` rung. It runs only after every normal rung was unavailable,
+priced out, or failed upstream, and it is sent without any price ceiling:
+
+```toml
+[[ladders]]
+name = "scribe"
+
+  [[ladders.rungs]]
+  provider = "mistral"
+  model = "labs-leanstral-1-5"
+
+  [ladders.fallback]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+```
+
+The fallback still needs a credential, spendable balance, and a provider that
+serves the requested API. It is never session-pinned, so the next request
+always tries the normal policy again. Do not set `max_cost_per_1m` on it: its
+purpose is deliberately to exceed the normal budget when that is the only way
+to return an answer.
+
 ## Reasoning depth
 
 A ladder is a price band, and it can also be a **depth**. `reasoning_effort` on
@@ -348,6 +373,11 @@ name = "scribe"
   [[ladders.rungs]]
   provider = "mistral"
   model = "labs-leanstral-1-5"
+
+  # If Mistral cannot serve, return an answer from the uncapped emergency rung.
+  [ladders.fallback]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
 ```
 
 A ladder of one rung is how this router says "this model or nothing". Mistral

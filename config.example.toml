@@ -261,6 +261,12 @@ name = "scribe"
   provider = "mistral"
   model = "labs-leanstral-1-5"
 
+  # This rung is attempted only after the normal one cannot serve. It is
+  # intentionally uncapped, so it may exceed the normal ladder budget.
+  [ladders.fallback]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+
 
 # The uncensored ladder: one model, reached two ways.
 #

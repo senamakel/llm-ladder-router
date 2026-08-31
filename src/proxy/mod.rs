@@ -347,10 +347,10 @@ async fn walk(
     let mut tried: Vec<usize> = Vec::new();
     let mut passed: Vec<Skipped> = Vec::new();
 
-    // Each iteration consumes one rung: either it serves, or it is recorded in
-    // `tried` and excluded from the next selection. The loop is therefore
-    // bounded by the rung count and cannot spin.
-    for _ in 0..ladder_config.rungs.len() {
+    // Each iteration consumes one normal rung or the optional ultimate
+    // fallback: either it serves, or it is recorded in `tried` and excluded
+    // from the next selection. The loop is therefore bounded and cannot spin.
+    for _ in 0..(ladder_config.rungs.len() + usize::from(ladder_config.fallback.is_some())) {
         let selection = choose(state, ladder_config, session.as_deref(), &tried).await;
 
         if let Some(reason) = &selection.pin_rejected {
@@ -391,7 +391,9 @@ async fn walk(
                 );
 
                 let served_by = sub_provider_of(&response);
-                remember(state, session.as_deref(), name, &chosen, served_by).await;
+                if chosen.rung < ladder_config.rungs.len() {
+                    remember(state, session.as_deref(), name, &chosen, served_by).await;
+                }
 
                 return with_routing_headers(
                     response,
