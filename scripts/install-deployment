@@ -93,6 +93,23 @@ if [ -n "$bridge" ]; then
     publish="$publish -p $bridge:$port:6969"
 fi
 
+# A container carrying a `ladder.spec` label was created by a watchdog that
+# recreates it whenever its run arguments differ from what that watchdog would
+# build — which is always, for a container this script made. The two would then
+# take turns recreating one container, and the watchdog wins, because it runs
+# from cron. Worse, it recreates against *its* pinned image while this script
+# has just installed a config written for another, which is a crash loop rather
+# than a disagreement.
+#
+# So the watchdog owns the container where there is one. This script installs
+# on a box that has none.
+if [ -n "$(docker inspect -f '{{index .Config.Labels "ladder.spec"}}' "$name" 2>/dev/null)" ]; then
+    echo "error: container '$name' is managed by a watchdog (it carries a ladder.spec label)" >&2
+    echo "       that watchdog would recreate it against its own image and arguments" >&2
+    echo "       update through the watchdog instead, e.g. 'ladder-up --pull'" >&2
+    exit 1
+fi
+
 if [ "$check_only" = yes ]; then
     echo "image:  $image"
     echo "config: $config"
