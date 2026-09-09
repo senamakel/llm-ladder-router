@@ -483,6 +483,30 @@ fn the_shipped_example_config_holds_no_inline_credential() {
     assert!(config.server.api_key.is_none());
 }
 
+/// Every price band can fall back to an uncapped rung.
+///
+/// The ceilings above it are a cost policy, and a cost policy that cannot be
+/// suspended turns a bad hour on the marketplace into a 502. The fallback is
+/// the ladder's answer to `no rung of ladder X could serve the request`: it
+/// carries no ceiling and is reached only once every normal rung has been
+/// priced out or has failed, so it costs nothing in an ordinary hour.
+#[test]
+fn every_shipped_price_band_ends_in_an_uncapped_fallback() {
+    let config = shipped_example();
+
+    for name in ["flash", "reasoning", "max-reasoning"] {
+        let ladder = config.ladder(name).unwrap();
+        let fallback = ladder
+            .fallback
+            .as_ref()
+            .unwrap_or_else(|| panic!("ladder `{name}` has no fallback rung"));
+        assert!(
+            fallback.max_cost_per_1m.is_none(),
+            "ladder `{name}` caps its fallback, which is the one rung that must not be"
+        );
+    }
+}
+
 /// The example is the documentation for the ladders the router ships with, so
 /// a change to any of their rungs should be deliberate rather than incidental.
 #[test]
