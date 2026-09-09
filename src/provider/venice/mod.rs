@@ -62,11 +62,20 @@ pub fn serves(wire: Wire) -> bool {
 /// A caller who sent their own `venice_parameters` object keeps every key they
 /// set, including this one: an explicit request beats a default, and the
 /// default is only here for the callers who never heard of the field.
-pub fn apply_routing(body: &mut serde_json::Value, chosen: &Chosen) {
+pub fn apply_routing(body: &mut serde_json::Value, chosen: &Chosen, wire: Wire) {
     let Some(object) = body.as_object_mut() else {
         return;
     };
     object.insert("model".to_string(), chosen.model.clone().into());
+
+    // An embeddings body has no conversation to prepend a system prompt to, so
+    // the rewrite below is meaningless there — and worse than meaningless:
+    // Venice's embeddings endpoint validates its body strictly and an unknown
+    // key is a 422, which is exactly how `mistral-embed` disqualified itself
+    // from this ladder. The model rewrite above is all an embeddings rung needs.
+    if wire == Wire::Embeddings {
+        return;
+    }
 
     let parameters = object
         .entry("venice_parameters")

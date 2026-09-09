@@ -223,8 +223,8 @@ impl Client {
                 mistral::inference_path(wire).to_string()
             }
             ProviderKind::Venice => {
-                venice::apply_routing(&mut body, chosen);
-                venice::inference_path().to_string()
+                venice::apply_routing(&mut body, chosen, wire);
+                venice::inference_path(wire).to_string()
             }
         };
 
