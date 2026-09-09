@@ -344,6 +344,13 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
         );
     }
 
+    // From here on the ladder is known by its own name rather than by the
+    // spelling that arrived. A caller reaching one ladder under three names
+    // would otherwise split its log lines, response headers and session pins
+    // three ways, and a pin recorded under an alias would be dropped as
+    // belonging to a different ladder on the next request that spelled it
+    // differently.
+    let name = ladder_config.name.clone();
     let session = session_of(&state, headers, &body);
     walk(&state, ladder_config, &name, session, body, wire).await
 }
