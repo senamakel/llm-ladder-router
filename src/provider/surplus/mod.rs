@@ -347,6 +347,29 @@ pub fn classify(status: reqwest::StatusCode, body: &[u8]) -> Disposition {
         return Disposition::Advance;
     }
 
+    // A model refusing to stop thinking. Whether reasoning can be switched off
+    // is a property of the model, not of the request, so the rung beside it
+    // serves the identical body — the same reason the sub-provider case above
+    // advances, arriving under a different code.
+    //
+    // The caller here is anything that asks for a cheap, shallow answer:
+    // `reasoning: {enabled: false}` and `thinking: {type: "disabled"}` are what
+    // a commit-message generator sends so a one-line subject does not spend its
+    // whole budget thinking. On 2026-09-09 four models reachable from `flash`
+    // and `reasoning` — `glm-5.3-flash`, `minimax-m2.5`, `minimax-m2.7` and
+    // `glm-5.3` — began answering those requests with
+    //
+    //   400 {"code":"request_rejected",
+    //        "message":"Reasoning is mandatory for this endpoint and cannot be
+    //                   disabled."}
+    //
+    // and because a 400 is handed back rather than stepped past, every
+    // checkpoint that happened to land on one of them fell back to a generic
+    // subject. The rungs on either side would have answered.
+    if status == reqwest::StatusCode::BAD_REQUEST && text.contains("Reasoning is mandatory") {
+        return Disposition::Advance;
+    }
+
     super::types::classify_status(status)
 }
 
