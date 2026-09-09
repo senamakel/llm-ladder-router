@@ -284,6 +284,23 @@ fn a_model_that_mandates_reasoning_advances() {
 }
 
 #[test]
+fn a_thinking_model_missing_its_reasoning_content_advances() {
+    // A thinking model returns `reasoning_content` on its assistant message and
+    // requires it back on the next turn. A client that keeps only `role` and
+    // `content` — which is what an ordinary `OpenAI`-compatible client does —
+    // cannot give it one, and seven of the eight models reachable from the
+    // shipped ladders refuse the turn outright. `gpt-5.6-luna` serves it, so
+    // there is a rung to advance to.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error"}}"#
+        ),
+        Disposition::Advance
+    );
+}
+
+#[test]
 fn a_genuine_caller_error_still_stops_the_ladder() {
     // The counterpart to the advancing cases above: a 400 about the request
     // itself is uniform across rungs, so walking the ladder would only repeat

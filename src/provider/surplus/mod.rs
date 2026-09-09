@@ -370,6 +370,27 @@ pub fn classify(status: reqwest::StatusCode, body: &[u8]) -> Disposition {
         return Disposition::Advance;
     }
 
+    // The mirror of the case above: a thinking model refusing a turn whose
+    // history does not carry the `reasoning_content` it emitted last time.
+    //
+    //   400 {"message":"The `reasoning_content` in the thinking mode must be
+    //                   passed back to the API."}
+    //
+    // The field is returned on the assistant message and has to come back on
+    // the next turn, and an ordinary `OpenAI`-compatible client keeps only
+    // `role` and `content`. Measured 2026-09-09: seven of the eight models the
+    // shipped ladders reach refuse such a turn and `gpt-5.6-luna` serves it, so
+    // there is somewhere to advance to.
+    //
+    // The router cannot repair this itself. It relays a history it does not
+    // own, and the field cannot be invented — an empty `reasoning_content`, a
+    // fabricated one, and an empty `reasoning` were all refused just the same.
+    // Advancing is the only honest answer, and it costs at most the first turn
+    // of a conversation: the session pin then holds it on the rung that served.
+    if status == reqwest::StatusCode::BAD_REQUEST && text.contains("must be passed back") {
+        return Disposition::Advance;
+    }
+
     super::types::classify_status(status)
 }
 
