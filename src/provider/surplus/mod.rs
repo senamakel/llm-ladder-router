@@ -370,6 +370,33 @@ pub fn classify(status: reqwest::StatusCode, body: &[u8]) -> Disposition {
         return Disposition::Advance;
     }
 
+    // The mirror image: a model that will not stop thinking, refusing a turn
+    // that does not carry its previous thinking back.
+    //
+    //   400 {"error":{"message":"The reasoning_content in the thinking mode
+    //                 must be passed back to the API.",
+    //                 "type":"invalid_request_error",...}}
+    //
+    // Seen on 2026-09-09. A thinking sub-provider expects the
+    // `reasoning_content` it emitted to be echoed on the assistant messages of
+    // the follow-up request, and an ordinary `OpenAI`-dialect client — Claude
+    // Code among them — does not keep that field. The router relays the
+    // caller's messages rather than authoring content on their behalf, so
+    // there is nothing it can add to satisfy this, and every later turn of the
+    // conversation would be refused the same way.
+    //
+    // Advancing is the only thing that serves the request: whether a model
+    // demands its own reasoning back is a fact about that model, so the rung
+    // beside it accepts the identical body. Matched on the field name because
+    // the type is `invalid_request_error`, which is otherwise exactly the
+    // shape this function hands straight back as the caller's mistake.
+    if status == reqwest::StatusCode::BAD_REQUEST
+        && text.contains("reasoning_content")
+        && text.contains("must be passed back")
+    {
+        return Disposition::Advance;
+    }
+
     super::types::classify_status(status)
 }
 

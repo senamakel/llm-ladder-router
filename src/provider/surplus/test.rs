@@ -284,6 +284,25 @@ fn a_model_that_mandates_reasoning_advances() {
 }
 
 #[test]
+fn a_thinking_model_demanding_its_own_reasoning_back_advances() {
+    // The exact shape seen on 2026-09-09. A thinking sub-provider requires the
+    // `reasoning_content` it emitted to be echoed on the assistant turns of the
+    // next request; a client that does not carry that field back can never
+    // satisfy it, and the router relays the caller's messages rather than
+    // inventing content, so retrying here is futile. Whether a model demands
+    // this is a property of that model, so the rung beside it serves the
+    // identical body — which is what makes this an advance rather than a caller
+    // error, despite the `invalid_request_error` type.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"message":"The reasoning_content in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#
+        ),
+        Disposition::Advance
+    );
+}
+
+#[test]
 fn a_genuine_caller_error_still_stops_the_ladder() {
     // The counterpart to the advancing cases above: a 400 about the request
     // itself is uniform across rungs, so walking the ladder would only repeat
