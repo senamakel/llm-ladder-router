@@ -23,8 +23,11 @@ use super::{Disposition, Wire};
 /// Venice roots its `OpenAI`-compatible surface at `/api/v1` rather than at
 /// `/v1`, so the base URL is the bare host and the version lives here.
 #[must_use]
-pub fn inference_path() -> &'static str {
-    "/api/v1/chat/completions"
+pub fn inference_path(wire: Wire) -> &'static str {
+    match wire {
+        Wire::Anthropic | Wire::OpenAi | Wire::Responses => "/api/v1/chat/completions",
+        Wire::Embeddings => "/api/v1/embeddings",
+    }
 }
 
 /// Whether this provider serves a wire format at all.
@@ -33,9 +36,19 @@ pub fn inference_path() -> &'static str {
 /// is declined before the round trip rather than relayed to an endpoint that
 /// would answer it with a 400. The failover loop reads the refusal as this
 /// rung's own failure and takes the next one.
+///
+/// It does publish embeddings, at `/api/v1/embeddings`, and that surface is
+/// served. It was previously declined here, which made Venice unusable as an
+/// embeddings rung — the `vectors` ladder's only working candidate. Venice also
+/// accepts the `dimensions` field an OpenAI-compatible embeddings client sends,
+/// which the obvious alternative (`mistral-embed`) refuses with a 422; see the
+/// `vectors` ladder in `config.example.toml`.
 #[must_use]
 pub fn serves(wire: Wire) -> bool {
-    wire == Wire::OpenAi
+    match wire {
+        Wire::OpenAi | Wire::Embeddings => true,
+        Wire::Anthropic | Wire::Responses => false,
+    }
 }
 
 /// Applies a chosen rung to an outgoing request body.
