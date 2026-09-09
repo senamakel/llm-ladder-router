@@ -929,7 +929,10 @@ fn prefers_an_exact_name_over_a_variant_stripped_match() {
     )
     .unwrap();
 
-    assert_eq!(config.ladder("reasoning[1m]").unwrap().name, "reasoning[1m]");
+    assert_eq!(
+        config.ladder("reasoning[1m]").unwrap().name,
+        "reasoning[1m]"
+    );
     assert_eq!(config.ladder("reasoning").unwrap().name, "reasoning");
 }
 

@@ -212,11 +212,7 @@ impl Config {
     /// would match both reports the ladder for the reason a reader expects.
     fn find(&self, matches: impl Fn(&str) -> bool) -> Option<&Ladder> {
         self.ladders.iter().find(|ladder| {
-            matches(&ladder.name)
-                || ladder
-                    .aliases
-                    .iter()
-                    .any(|alias| matches(alias.trim()))
+            matches(&ladder.name) || ladder.aliases.iter().any(|alias| matches(alias.trim()))
         })
     }
 
