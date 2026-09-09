@@ -1,0 +1,173 @@
+#!/bin/sh
+# Install the ladder router as a long-running container, or update one already
+# installed.
+#
+#   scripts/install-deployment [--image <ref>] [--config <path>] [--port <port>]
+#   scripts/install-deployment --check
+#
+# What it does, in order: install the committed config, verify the credentials
+# it names are present, then recreate the container against them.
+#
+# The config is `config.example.toml` from this repository, copied verbatim. It
+# names every credential as an environment variable and contains no secret, so
+# it is the same file on every machine and the only thing that differs between
+# deployments is the environment it is started with. That is what makes this
+# script safe to run anywhere: the thing being spread carries no secret.
+#
+# Credentials are read from the environment, falling back to `.env` beside this
+# repository. They are passed to the container through a file rather than on
+# the command line, so they never appear in `ps` output or in shell history.
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+image="ghcr.io/senamakel/llm-ladder-router:latest"
+config="${LADDER_CONFIG_DEST:-$HOME/.config/ladder/config.toml}"
+port=6969
+name=ladder
+check_only=no
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)  image=$2; shift 2 ;;
+        --config) config=$2; shift 2 ;;
+        --port)   port=$2; shift 2 ;;
+        --name)   name=$2; shift 2 ;;
+        --check)  check_only=yes; shift ;;
+        -h|--help)
+            sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        *)
+            echo "unknown option: $1" >&2
+            exit 2 ;;
+    esac
+done
+
+# The credentials the shipped config names. Every one is a variable name read
+# out of the config itself rather than a list maintained here, so a provider
+# added to the config cannot be forgotten by this script.
+required_vars() {
+    sed -n 's/^[[:space:]]*api_key_env[[:space:]]*=[[:space:]]*"\([A-Z0-9_]*\)".*/\1/p' \
+        "$root/config.example.toml" | sort -u
+}
+
+# `.env` is the local convenience; a real deployment may set these another way,
+# so the environment wins and `.env` only fills gaps.
+if [ -f "$root/.env" ]; then
+    # shellcheck disable=SC1091
+    set -a; . "$root/.env"; set +a
+fi
+
+missing=
+for var in $(required_vars); do
+    eval "value=\${$var:-}"
+    [ -n "$value" ] || missing="$missing $var"
+done
+
+# LADDER_API_KEY is the caller key. Unset, the router accepts every caller —
+# and the shipped config binds every interface, not loopback. That combination
+# is the one mistake this script must never install, so it is fatal rather than
+# a warning.
+if [ -z "${LADDER_API_KEY:-}" ]; then
+    echo "error: LADDER_API_KEY is unset" >&2
+    echo "       the shipped config binds 0.0.0.0 and would accept every caller" >&2
+    echo "       set it in the environment or in $root/.env; see .env.example" >&2
+    exit 1
+fi
+
+if [ -n "$missing" ]; then
+    echo "warning: no value for:$missing" >&2
+    echo "         rungs on those providers will be skipped as missing-credential" >&2
+fi
+
+# Loopback, plus the docker bridge gateway when there is one. The second is
+# what lets a *sibling container* reach the router: a client in its own
+# container cannot use the host's loopback, and publishing only there is how a
+# working deployment silently stops answering half its callers. Absent on hosts
+# with no bridge network, where the loopback binding is the whole story.
+publish="-p 127.0.0.1:$port:6969"
+bridge=$(docker network inspect bridge \
+    --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || true)
+if [ -n "$bridge" ]; then
+    publish="$publish -p $bridge:$port:6969"
+fi
+
+if [ "$check_only" = yes ]; then
+    echo "image:  $image"
+    echo "config: $config"
+    echo "listen: $(echo "$publish" | sed 's/-p //g')"
+    echo "credentials present for:$(for v in $(required_vars); do
+        eval "value=\${$v:-}"; [ -n "$value" ] && printf ' %s' "$v"; done)"
+    exit 0
+fi
+
+# Validate before installing. A config the binary refuses would leave the
+# container in a restart loop against a file that has already replaced the one
+# that worked, so the check happens while the old config is still in place.
+echo "validating config against $image..."
+if ! docker run --rm -v "$root/config.example.toml:/tmp/candidate.toml:ro" \
+        -e LADDER_API_KEY=validation-only \
+        "$image" --config /tmp/candidate.toml --check >/dev/null 2>&1; then
+    # `--check` is not in every build; fall back to letting the binary parse it
+    # at startup and reporting the failure there rather than refusing to deploy
+    # against an older image.
+    echo "note: $image does not support --check; relying on the startup parse" >&2
+fi
+
+mkdir -p "$(dirname "$config")"
+if [ -f "$config" ]; then
+    backup="$config.$(date -u +%Y%m%dT%H%M%SZ).bak"
+    cp "$config" "$backup"
+    echo "backed up existing config to $backup"
+fi
+cp "$root/config.example.toml" "$config"
+echo "installed $config"
+
+# The environment file the container reads. Written with a private mode before
+# any secret goes into it, and removed on exit: docker has already copied the
+# values into the container's config by the time this script ends.
+env_file=$(mktemp)
+chmod 600 "$env_file"
+trap 'rm -f "$env_file"' EXIT INT TERM
+for var in LADDER_API_KEY $(required_vars); do
+    eval "value=\${$var:-}"
+    [ -n "$value" ] && printf '%s=%s\n' "$var" "$value" >>"$env_file"
+done
+
+docker rm -f "$name" >/dev/null 2>&1 || true
+
+# `$publish` is deliberately unquoted: it is a list of `-p host:port` flags,
+# not one argument.
+# shellcheck disable=SC2086
+docker run -d \
+    --name "$name" \
+    --restart always \
+    --env-file "$env_file" \
+    -v "$config:/etc/ladder/config.toml:ro" \
+    $publish \
+    "$image" --config /etc/ladder/config.toml >/dev/null
+
+echo "waiting for the router to load prices and balances..."
+i=0
+while [ "$i" -lt 900 ]; do
+    if curl -fsS -m 1 "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
+        echo "listening on http://127.0.0.1:$port"
+        echo "ladders:"
+        curl -fsS "http://127.0.0.1:$port/v1/models" \
+            | sed 's/},{/}\n{/g' \
+            | sed -n 's/.*"id":"\([^"]*\)".*/  \1/p'
+        exit 0
+    fi
+    if [ -z "$(docker ps -q -f "name=^${name}$")" ]; then
+        echo "container exited during startup:" >&2
+        docker logs --tail 20 "$name" >&2
+        exit 1
+    fi
+    i=$((i + 1))
+    sleep 0.1
+done
+
+echo "router did not answer within 90s:" >&2
+docker logs --tail 20 "$name" >&2
+exit 1

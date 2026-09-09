@@ -421,51 +421,153 @@ fn reports_the_path_when_the_file_is_missing() {
     }
 }
 
-#[test]
-fn the_shipped_example_config_is_valid() {
+/// The shipped example, parsed once for every test that asserts on it.
+fn shipped_example() -> Config {
     let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
         .unwrap();
-    let config = Config::parse(&text).unwrap();
+    Config::parse(&text).unwrap()
+}
+
+/// The rungs of one ladder, as `(provider, model)` pairs in declaration order.
+fn rungs_of<'a>(config: &'a Config, ladder: &str) -> Vec<(&'a str, &'a str)> {
+    config
+        .ladder(ladder)
+        .unwrap()
+        .rungs
+        .iter()
+        .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
+        .collect()
+}
+
+#[test]
+fn the_shipped_example_config_is_valid() {
+    let config = shipped_example();
 
     // Every interface, not loopback: the example is what the container image
     // ships, and a container that binds loopback answers nobody.
     assert_eq!(config.server.bind, "0.0.0.0:6969");
+}
 
-    // The example is the documentation for the six ladders the router ships
-    // with; a change to any of them should be deliberate.
+/// The shipped config names its credentials and never carries one.
+///
+/// This file is committed, copied between machines, and installed onto
+/// deployments, so a literal key in it is a key in git history and in every
+/// copy. It used to carry one on `server.api_key`. Every credential is now a
+/// variable name, which is also what lets one file serve every deployment.
+#[test]
+fn the_shipped_example_config_holds_no_inline_credential() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+        .unwrap();
+
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        assert!(
+            !line.starts_with("api_key ") && !line.starts_with("api_key="),
+            "config.example.toml:{} inlines a credential: {line}",
+            number + 1
+        );
+    }
+
+    // The caller key is still required, just named rather than written out.
+    // Without this the router accepts every caller, and the shipped bind is
+    // every interface rather than loopback.
+    let config = shipped_example();
     assert_eq!(
-        config
-            .ladder("flash")
-            .unwrap()
-            .rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        config.server.api_key_env.as_deref(),
+        Some("LADDER_API_KEY"),
+        "the shipped config must name a caller key variable"
+    );
+    assert!(config.server.api_key.is_none());
+}
+
+/// Every price band can fall back to an uncapped rung.
+///
+/// The ceilings above it are a cost policy, and a cost policy that cannot be
+/// suspended turns a bad hour on the marketplace into a 502. The fallback is
+/// the ladder's answer to `no rung of ladder X could serve the request`: it
+/// carries no ceiling and is reached only once every normal rung has been
+/// priced out or has failed, so it costs nothing in an ordinary hour.
+#[test]
+fn every_shipped_price_band_ends_in_an_uncapped_fallback() {
+    let config = shipped_example();
+
+    for name in ["flash", "reasoning", "max-reasoning"] {
+        let ladder = config.ladder(name).unwrap();
+        let fallback = ladder
+            .fallback
+            .as_ref()
+            .unwrap_or_else(|| panic!("ladder `{name}` has no fallback rung"));
+        assert!(
+            fallback.max_cost_per_1m.is_none(),
+            "ladder `{name}` caps its fallback, which is the one rung that must not be"
+        );
+    }
+}
+
+/// The example is the documentation for the ladders the router ships with, so
+/// a change to any of their rungs should be deliberate rather than incidental.
+#[test]
+fn the_shipped_cheap_ladders_are_what_they_claim_to_be() {
+    let config = shipped_example();
+
+    assert_eq!(
+        rungs_of(&config, "flash"),
         vec![
             ("surplus", "gpt-5.6-luna"),
             ("surplus", "deepseek-v4-flash"),
+            ("surplus", "glm-5.3-flash"),
+            ("surplus", "minimax-m2.5"),
+            ("openrouter", "deepseek/deepseek-v4-flash"),
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
 
     assert_eq!(
-        config
-            .ladder("reasoning")
-            .unwrap()
-            .rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        rungs_of(&config, "reasoning"),
         vec![
             ("surplus", "deepseek-v4-pro"),
+            ("surplus", "glm-5.3"),
             ("surplus", "glm-5.2"),
+            ("surplus", "minimax-m2.7"),
             ("surplus", "gpt-5.6-luna"),
             ("surplus", "deepseek-v4-flash"),
+            ("openrouter", "deepseek/deepseek-v4-pro"),
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
+}
 
-    // One rung, one seller, no ceiling: "this model or nothing".
+/// Every ladder ends on a provider other than the one it starts on.
+///
+/// A ladder whose rungs share one marketplace has no failover, whatever its
+/// length: the fifteen minutes Surplus spent answering `403` from its own edge
+/// took every rung of every ladder with it. The two direct-provider ladders are
+/// the deliberate exceptions — `scribe` and `uncensored` say "this model or
+/// nothing", and `vectors` has only one marketplace carrying the model at all.
+#[test]
+fn every_shipped_price_band_can_fail_over_to_a_second_provider() {
+    let config = shipped_example();
+
+    for name in ["flash", "reasoning", "max-reasoning"] {
+        let providers: std::collections::BTreeSet<&str> = rungs_of(&config, name)
+            .into_iter()
+            .map(|(provider, _)| provider)
+            .collect();
+        assert!(
+            providers.len() > 1,
+            "ladder `{name}` has no rung to fail over to: {providers:?}"
+        );
+    }
+}
+
+/// A ladder of one is how this router says "this model or nothing".
+#[test]
+fn the_shipped_single_seller_ladders_carry_no_ceiling() {
+    let config = shipped_example();
+
     let scribe = config.ladder("scribe").unwrap();
     assert_eq!(scribe.rungs.len(), 1);
     assert_eq!(scribe.rungs[0].model, "labs-leanstral-1-5");
@@ -476,11 +578,7 @@ fn the_shipped_example_config_is_valid() {
     // behind it as the rung that cannot be outbid, only fallen back to.
     let uncensored = config.ladder("uncensored").unwrap();
     assert_eq!(
-        uncensored
-            .rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        rungs_of(&config, "uncensored"),
         vec![
             ("surplus", "venice-uncensored-1.2"),
             ("venice", "venice-uncensored-1-2"),
@@ -496,31 +594,40 @@ fn the_shipped_example_config_is_valid() {
     assert_eq!(vectors.surface, Surface::Embeddings);
     assert_eq!(vectors.rungs[0].model, "venice-embed-1");
     assert_eq!(config.cap_for(vectors, &vectors.rungs[0]), None);
+}
 
-    let max = config.ladder("max-reasoning").unwrap();
+#[test]
+fn the_shipped_deepest_ladder_never_steps_down_to_a_fast_model() {
+    let config = shipped_example();
+
     assert_eq!(
-        max.rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        rungs_of(&config, "max-reasoning"),
         vec![
+            ("surplus", "gpt-5.6-terra"),
             ("surplus", "deepseek-v4-pro"),
+            ("surplus", "glm-5.3"),
             ("surplus", "glm-5.2"),
             ("surplus", "gpt-5.6-luna"),
             ("openrouter", "deepseek/deepseek-v4-pro"),
         ],
         "no rung of the deepest ladder may be a fast model"
     );
+}
 
-    // Every rung asks for depth, and the effort each one asks for is the one
-    // its model family accepts. Named on the rung rather than inherited, so
-    // that reading a rung tells you what it will send.
+#[test]
+fn every_rung_of_the_shipped_deepest_ladder_asks_for_depth_itself() {
+    let config = shipped_example();
+    let max = config.ladder("max-reasoning").unwrap();
+
+    // The effort each rung asks for is the one its model family accepts, named
+    // on the rung rather than inherited, so that reading a rung tells you what
+    // it will send.
     assert_eq!(
         max.rungs
             .iter()
             .map(|rung| max.effort_for(rung))
             .collect::<Vec<_>>(),
-        ["high", "high", "xhigh", "high"]
+        ["high", "high", "high", "high", "xhigh", "high"]
             .map(|effort| Some(effort.to_string()))
             .to_vec()
     );
@@ -531,11 +638,21 @@ fn the_shipped_example_config_is_valid() {
             rung.model
         );
     }
+}
 
-    // The provider ceilings must not clamp it. The tighter of the two wins, so
-    // a marketplace ceiling below a rung's own would silently undo the price
-    // this ladder was written to pay — and the ladder would step down to a
-    // cheaper model while reading as though it had not.
+/// The provider ceilings must not clamp the deepest ladder.
+///
+/// The tighter of the two wins, so a marketplace ceiling below a rung's own
+/// would silently undo the price this ladder was written to pay — and the
+/// ladder would step down to a cheaper model while reading as though it had
+/// not. This is the check that caught the `openrouter` backstop sitting at
+/// 1.00 while its cheapest `deepseek-v4-pro` endpoint listed at 1.20, which
+/// made every `OpenRouter` reasoning rung ineligible and unreachable.
+#[test]
+fn no_shipped_provider_ceiling_clamps_the_deepest_ladders_rungs() {
+    let config = shipped_example();
+    let max = config.ladder("max-reasoning").unwrap();
+
     for rung in &max.rungs {
         let cap = config.cap_for(max, rung).unwrap();
         assert!(
@@ -870,4 +987,229 @@ fn an_embeddings_rung_does_not_inherit_the_providers_ceiling() {
     // The same provider ceiling still binds on the chat ladder beside it.
     let prose = config.ladder("prose").unwrap();
     assert_eq!(config.cap_for(prose, &prose.rungs[0]), Some(1.00));
+}
+
+/// A ladder answers to the name a request used, to a declared alias, and to
+/// either with a context-variant marker appended.
+const ALIASED: &str = r#"
+[providers.surplus]
+kind = "surplus"
+base_url = "https://api.surplusintelligence.ai"
+api_key_env = "SURPLUS_API_KEY"
+
+[[ladders]]
+name = "reasoning"
+aliases = ["reasoning-v1", "deepseek"]
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
+
+[[ladders]]
+name = "flash"
+aliases = ["chat-v1"]
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+"#;
+
+#[test]
+fn resolves_a_ladder_by_its_own_name() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert_eq!(config.ladder("reasoning").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("flash").unwrap().name, "flash");
+}
+
+#[test]
+fn resolves_a_ladder_by_a_declared_alias() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert_eq!(config.ladder("reasoning-v1").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("deepseek").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("chat-v1").unwrap().name, "flash");
+}
+
+#[test]
+fn resolves_a_ladder_through_a_context_variant_marker() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    // The ACP client appends the variant before the request leaves it.
+    assert_eq!(config.ladder("reasoning[1m]").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("flash[1m]").unwrap().name, "flash");
+    // An alias carrying one resolves the same way.
+    assert_eq!(config.ladder("chat-v1[1m]").unwrap().name, "flash");
+}
+
+#[test]
+fn resolves_a_ladder_regardless_of_case_and_surrounding_space() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert_eq!(config.ladder("Reasoning").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("  flash  ").unwrap().name, "flash");
+}
+
+#[test]
+fn prefers_an_exact_alias_over_a_variant_stripped_name() {
+    // An exact match — on a name or an alias — is more deliberate than one
+    // reached by stripping a marker, so the ladder that spells the whole name
+    // out wins even though the other would match after stripping.
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "long-context"
+        aliases = ["reasoning[1m]"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.3"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.ladder("reasoning[1m]").unwrap().name, "long-context");
+    assert_eq!(config.ladder("reasoning").unwrap().name, "reasoning");
+}
+
+#[test]
+fn prefers_an_exact_name_over_a_variant_stripped_match() {
+    // A ladder genuinely named `reasoning[1m]` still answers to it, rather
+    // than being shadowed by the `reasoning` the marker strips down to.
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "reasoning[1m]"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.3"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.ladder("reasoning[1m]").unwrap().name,
+        "reasoning[1m]"
+    );
+    assert_eq!(config.ladder("reasoning").unwrap().name, "reasoning");
+}
+
+#[test]
+fn rejects_an_unknown_name_that_matches_nothing() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert!(config.ladder("nope").is_none());
+    assert!(config.ladder("nope[1m]").is_none());
+    assert!(config.ladder("").is_none());
+    // A marker is stripped off a name, never taken as the whole of one: `[1m]`
+    // alone asks for no ladder in particular and must not resolve to the first
+    // one declared.
+    assert!(config.ladder("[1m]").is_none());
+    assert!(config.ladder("[reasoning]").is_none());
+}
+
+#[test]
+fn rejects_an_alias_that_collides_with_another_ladder() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+        aliases = ["flash"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "flash"
+        aliases = ["reasoning"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, Error::DuplicateLadder(name) if name == "flash"));
+}
+
+#[test]
+fn rejects_two_ladders_sharing_an_alias() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+        aliases = ["deep"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "flash"
+        aliases = ["deep"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, Error::DuplicateLadder(name) if name == "deep"));
+}
+
+#[test]
+fn rejects_a_blank_alias() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+        aliases = ["  "]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, Error::Empty { what } if what.contains("alias")));
+}
+
+#[test]
+fn a_ladder_without_aliases_still_parses() {
+    let config = Config::parse(EXAMPLE).unwrap();
+
+    assert!(config.ladder("flash").unwrap().aliases.is_empty());
 }

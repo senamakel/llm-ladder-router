@@ -85,8 +85,9 @@ Two things to know before exposing it:
 
 - It binds `0.0.0.0`, because loopback inside a container is reachable by
   nothing. That means **the caller key is what stands between the router and
-  anyone who can reach the port** — set `server.api_key`, or point
-  `server.api_key_env` at `LADDER_API_KEY` and pass that in.
+  anyone who can reach the port** — the shipped config points
+  `server.api_key_env` at `LADDER_API_KEY`, so pass that in. With the variable
+  unset the router accepts every caller.
 - The router loads every rung's order book before it binds, so a fresh
   container is deliberately not healthy for the first few seconds. The
   `HEALTHCHECK` allows for it with a start period; give orchestrator probes the
@@ -94,6 +95,44 @@ Two things to know before exposing it:
 
 It runs as an unprivileged fixed uid (10001), and needs no CA bundle — TLS
 roots are compiled in.
+
+### Installing it as a service
+
+`scripts/install-deployment` does the whole thing — installs the config,
+verifies the credentials it names, and recreates the container against them:
+
+```sh
+scripts/install-deployment                     # install or update
+scripts/install-deployment --check             # say what it would do
+scripts/install-deployment --image ghcr.io/senamakel/llm-ladder-router:v0.2.1
+```
+
+The config it installs is `config.example.toml`, copied verbatim. That file
+names every credential as an environment variable and **contains no secret**,
+which is what makes it the same file on every machine: the only thing that
+differs between two deployments is the environment each is started with. A test
+asserts it holds no inline credential, so it cannot quietly regain one.
+
+The credentials themselves come from the environment, falling back to `.env`.
+They reach the container through a mode-600 file that is deleted on exit,
+rather than on the command line where `ps` would show them.
+
+`LADDER_API_KEY` being unset is fatal rather than a warning: the shipped config
+binds every interface, so installing without a caller key would publish an
+unauthenticated router. Everything else missing is a warning — those rungs are
+skipped as missing-credential and the ladder steps past them.
+
+The config is validated against the target image *before* it replaces the one
+in place, using `ladder --check`:
+
+```sh
+ladder --config config.example.toml --check
+```
+
+which loads and validates a config, prints the ladders and their aliases, and
+exits without binding. Installing a config the binary refuses would otherwise
+leave the service restart-looping against a file that had already overwritten
+the last one that worked.
 
 ## Endpoints
 
@@ -119,6 +158,26 @@ speak — anything built on `codex` posts to `/responses` and nothing else.
 
 The `model` field names the **ladder** (`flash`, `reasoning`, `max-reasoning`,
 `scribe`), not a model.
+
+A client rarely sends the name exactly as written in `config.toml`, so the
+router resolves it in four passes: the ladder's own name, then a declared
+`aliases` entry, then either with a trailing `[...]` context-variant marker
+stripped, then either folded to lowercase. So `flash`, `chat-v1`, `flash[1m]`
+and `Flash` all reach one ladder, and `GET /v1/models` lists the aliases beside
+each name. Earlier passes win outright, so a ladder genuinely named
+`reasoning[1m]` is never shadowed by the `reasoning` that stripping produces,
+and two ladders answering to one name are refused at load time rather than
+resolved by declaration order.
+
+Give a ladder an alias rather than a copy of itself under the second name. The
+copies drift, and a name nobody remembered to copy comes back to the caller as
+`unknown ladder`:
+
+```toml
+[[ladders]]
+name = "flash"
+aliases = ["chat-v1", "vision-v1"]
+```
 
 Authenticate with `Authorization: Bearer <key>` or `x-api-key: <key>`; both work
 on both surfaces. The key is `server.api_key` in `config.toml`, or

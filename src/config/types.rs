@@ -404,6 +404,19 @@ impl Surface {
 pub struct Ladder {
     /// The name a request uses to select this ladder.
     pub name: String,
+    /// Other names this ladder also answers to.
+    ///
+    /// A client names the model it wants, and different clients name the same
+    /// intent differently — `chat-v1` and `flash` are one ladder, not two. The
+    /// alternative, a copy of the whole ladder under each name, is what this
+    /// exists to replace: the copies drift, and a name nobody remembered to
+    /// copy is a request the router refuses outright.
+    ///
+    /// An alias never shadows a real ladder name; see [`super::Config::ladder`]
+    /// for the resolution order, and validation refuses a collision at load
+    /// time rather than resolving one silently.
+    #[serde(default)]
+    pub aliases: Vec<String>,
     /// Which API surface this ladder answers on.
     ///
     /// Unset means [`Surface::Chat`], so every ladder written before embeddings

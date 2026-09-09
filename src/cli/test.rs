@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use super::{DEFAULT_CONFIG, config_path, init_tracing, run, run_with};
+use super::{DEFAULT_CONFIG, check_with, config_path, init_tracing, run, run_with};
 
 fn parse(args: &[&str]) -> String {
     config_path(args.iter().map(|arg| (*arg).to_string()))
@@ -107,5 +107,101 @@ async fn a_valid_configuration_is_loaded_and_handed_to_the_server() {
     assert!(error.to_string().contains("cannot bind"), "{error}");
 
     drop(held);
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn check_accepts_a_valid_configuration_without_binding() {
+    let path = std::env::temp_dir().join(format!("ladder-check-ok-{}.toml", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"
+        [server]
+        # A port nothing may bind, so a check that started a server would fail
+        # rather than pass quietly.
+        bind = "0.0.0.0:6969"
+
+        [providers.openrouter]
+        kind = "openrouter"
+        base_url = "http://127.0.0.1:1"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "flash"
+        aliases = ["chat-v1"]
+          [[ladders.rungs]]
+          provider = "openrouter"
+          model = "m"
+        "#,
+    )
+    .unwrap();
+
+    check_with(&path.display().to_string()).unwrap();
+
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn check_rejects_an_invalid_configuration() {
+    let path = std::env::temp_dir().join(format!("ladder-check-bad-{}.toml", std::process::id()));
+    // A rung naming a provider that does not exist: the shape of mistake a
+    // deployment script must catch before overwriting a working config.
+    std::fs::write(
+        &path,
+        r#"
+        [providers.openrouter]
+        kind = "openrouter"
+        base_url = "http://127.0.0.1:1"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "flash"
+          [[ladders.rungs]]
+          provider = "nowhere"
+          model = "m"
+        "#,
+    )
+    .unwrap();
+
+    let error = check_with(&path.display().to_string()).unwrap_err();
+    assert!(error.to_string().contains("unknown provider"), "{error}");
+
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[tokio::test]
+async fn the_check_flag_validates_instead_of_serving() {
+    let path = std::env::temp_dir().join(format!("ladder-check-flag-{}.toml", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"
+        [server]
+        bind = "0.0.0.0:6969"
+
+        [providers.openrouter]
+        kind = "openrouter"
+        base_url = "http://127.0.0.1:1"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [[ladders]]
+        name = "flash"
+          [[ladders.rungs]]
+          provider = "openrouter"
+          model = "m"
+        "#,
+    )
+    .unwrap();
+
+    // Returns rather than serving; without `--check` this would block on the
+    // listening socket.
+    run([
+        "--config".to_string(),
+        path.display().to_string(),
+        "--check".to_string(),
+    ]
+    .into_iter())
+    .await
+    .unwrap();
+
     std::fs::remove_file(&path).unwrap();
 }
