@@ -864,9 +864,10 @@ fn resolves_a_ladder_regardless_of_case_and_surrounding_space() {
 }
 
 #[test]
-fn prefers_an_exact_name_over_another_ladders_alias() {
-    // `flash` is a real ladder and also an alias of `reasoning`; the ladder
-    // that owns the name must win, whatever order they are declared in.
+fn prefers_an_exact_alias_over_a_variant_stripped_name() {
+    // An exact match — on a name or an alias — is more deliberate than one
+    // reached by stripping a marker, so the ladder that spells the whole name
+    // out wins even though the other would match after stripping.
     let config = Config::parse(
         r#"
         [providers.surplus]
@@ -876,21 +877,22 @@ fn prefers_an_exact_name_over_another_ladders_alias() {
 
         [[ladders]]
         name = "reasoning"
-        aliases = ["fast"]
           [[ladders.rungs]]
           provider = "surplus"
           model = "deepseek-v4-pro"
 
         [[ladders]]
-        name = "fast"
+        name = "long-context"
+        aliases = ["reasoning[1m]"]
           [[ladders.rungs]]
           provider = "surplus"
-          model = "deepseek-v4-flash"
+          model = "glm-5.3"
         "#,
     )
     .unwrap();
 
-    assert_eq!(config.ladder("fast").unwrap().name, "fast");
+    assert_eq!(config.ladder("reasoning[1m]").unwrap().name, "long-context");
+    assert_eq!(config.ladder("reasoning").unwrap().name, "reasoning");
 }
 
 #[test]
@@ -958,7 +960,7 @@ fn rejects_an_alias_that_collides_with_another_ladder() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, Error::DuplicateLadder(name) if name == "reasoning"));
+    assert!(matches!(error, Error::DuplicateLadder(name) if name == "flash"));
 }
 
 #[test]
