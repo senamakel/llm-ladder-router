@@ -120,6 +120,26 @@ speak — anything built on `codex` posts to `/responses` and nothing else.
 The `model` field names the **ladder** (`flash`, `reasoning`, `max-reasoning`,
 `scribe`), not a model.
 
+A client rarely sends the name exactly as written in `config.toml`, so the
+router resolves it in four passes: the ladder's own name, then a declared
+`aliases` entry, then either with a trailing `[...]` context-variant marker
+stripped, then either folded to lowercase. So `flash`, `chat-v1`, `flash[1m]`
+and `Flash` all reach one ladder, and `GET /v1/models` lists the aliases beside
+each name. Earlier passes win outright, so a ladder genuinely named
+`reasoning[1m]` is never shadowed by the `reasoning` that stripping produces,
+and two ladders answering to one name are refused at load time rather than
+resolved by declaration order.
+
+Give a ladder an alias rather than a copy of itself under the second name. The
+copies drift, and a name nobody remembered to copy comes back to the caller as
+`unknown ladder`:
+
+```toml
+[[ladders]]
+name = "flash"
+aliases = ["chat-v1", "vision-v1"]
+```
+
 Authenticate with `Authorization: Bearer <key>` or `x-api-key: <key>`; both work
 on both surfaces. The key is `server.api_key` in `config.toml`, or
 `server.api_key_env` to keep it out of the file. With neither set the router
