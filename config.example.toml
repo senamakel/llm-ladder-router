@@ -9,12 +9,18 @@ bind = "0.0.0.0:6969"
 # the ladder advances.
 request_timeout = "120s"
 # The key callers must present, as `Authorization: Bearer <key>` or `x-api-key`.
-# Both spellings work on both surfaces. Change this before binding anywhere
-# other than loopback; omit it entirely to accept every caller.
-api_key = "ladder-local-dev-key"
-# Prefer this in a real deployment: when the named variable is set and
-# non-empty it wins over the literal above, so the secret stays out of the file.
-# api_key_env = "LADDER_API_KEY"
+# Both spellings work on both surfaces.
+#
+# Named, never inlined. This file is committed and copied between machines, so
+# a literal key here is a key in git history and in every copy — and the one
+# that used to sit on this line was a real deployment's key. `server.api_key`
+# still exists for a throwaway loopback run, but nothing that ships should use
+# it.
+#
+# With the variable unset the router accepts *every* caller, which is only ever
+# appropriate on a loopback bind — and the bind above is not loopback. Set
+# `LADDER_API_KEY` in the environment before starting this.
+api_key_env = "LADDER_API_KEY"
 
 [pricing]
 # How often the order books are re-read.
@@ -175,7 +181,7 @@ headers = { "HTTP-Referer" = "https://opencompany.tinyhumans.ai/", "X-OpenRouter
 # on this ladder they nearly are: any of these will do, so price decides.
 [[ladders]]
 name = "flash"
-aliases = ["chat-v1", "vision-v1"]
+aliases = ["chat-v1", "vision-v1", "flash-v1"]
 cost_basis = "completion"
 
   [[ladders.rungs]]
@@ -231,7 +237,7 @@ cost_basis = "completion"
 
 [[ladders]]
 name = "reasoning"
-aliases = ["reasoning-v1"]
+aliases = ["reasoning-v1", "deepseek"]
 cost_basis = "completion"
 
   [[ladders.rungs]]
@@ -309,7 +315,7 @@ cost_basis = "completion"
 
 [[ladders]]
 name = "max-reasoning"
-aliases = ["agentic-v1"]
+aliases = ["agentic-v1", "max-reasoning-v1"]
 cost_basis = "completion"
 # The fallback, so a rung added in a hurry still asks for depth. Every rung
 # below names its own anyway: which words a model accepts is a fact about that
@@ -436,7 +442,7 @@ cost_basis = "completion"
 # ladder of one, for the same reason `scribe` is one.
 [[ladders]]
 name = "vectors"
-aliases = ["embeddings-v1"]
+aliases = ["embeddings-v1", "vectors-v1"]
 surface = "embeddings"
 
   [[ladders.rungs]]
