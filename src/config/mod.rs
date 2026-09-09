@@ -85,25 +85,9 @@ impl Config {
             }
         }
 
-        // Names and aliases share one namespace, because a request cannot say
-        // which of the two it meant. Two ladders answering to one name would
-        // resolve by declaration order, which is not a policy anybody wrote
-        // down, so it is refused here instead.
-        let mut seen = std::collections::BTreeSet::new();
+        self.check_names_are_unique()?;
+
         for ladder in &self.ladders {
-            if !seen.insert(ladder.name.trim()) {
-                return Err(Error::DuplicateLadder(ladder.name.clone()));
-            }
-            for alias in &ladder.aliases {
-                if alias.trim().is_empty() {
-                    return Err(Error::Empty {
-                        what: format!("ladder {} alias", ladder.name),
-                    });
-                }
-                if !seen.insert(alias.trim()) {
-                    return Err(Error::DuplicateLadder(alias.trim().to_string()));
-                }
-            }
             if ladder.rungs.is_empty() {
                 return Err(Error::Empty {
                     what: format!("ladder {} rungs", ladder.name),
@@ -162,6 +146,37 @@ impl Config {
             }
         }
 
+        Ok(())
+    }
+
+    /// Refuses two ladders that would answer to the same name.
+    ///
+    /// Names and aliases share one namespace, because a request cannot say
+    /// which of the two it meant. Two ladders answering to one name would
+    /// resolve by declaration order, which is not a policy anybody wrote down.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::DuplicateLadder`] if a name or alias is claimed twice.
+    /// - [`Error::Empty`] if an alias is blank, which would otherwise be a name
+    ///   no request can send and no reader can see.
+    fn check_names_are_unique(&self) -> Result<()> {
+        let mut seen = std::collections::BTreeSet::new();
+        for ladder in &self.ladders {
+            if !seen.insert(ladder.name.trim()) {
+                return Err(Error::DuplicateLadder(ladder.name.clone()));
+            }
+            for alias in &ladder.aliases {
+                if alias.trim().is_empty() {
+                    return Err(Error::Empty {
+                        what: format!("ladder {} alias", ladder.name),
+                    });
+                }
+                if !seen.insert(alias.trim()) {
+                    return Err(Error::DuplicateLadder(alias.trim().to_string()));
+                }
+            }
+        }
         Ok(())
     }
 
