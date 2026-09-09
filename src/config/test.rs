@@ -993,6 +993,11 @@ fn rejects_an_unknown_name_that_matches_nothing() {
     assert!(config.ladder("nope").is_none());
     assert!(config.ladder("nope[1m]").is_none());
     assert!(config.ladder("").is_none());
+    // A marker is stripped off a name, never taken as the whole of one: `[1m]`
+    // alone asks for no ladder in particular and must not resolve to the first
+    // one declared.
+    assert!(config.ladder("[1m]").is_none());
+    assert!(config.ladder("[reasoning]").is_none());
 }
 
 #[test]
