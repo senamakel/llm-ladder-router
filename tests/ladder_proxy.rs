@@ -249,6 +249,7 @@ fn config_for(surplus: &str, openrouter: &str, surplus_cap: f64) -> String {
 
         [[ladders]]
         name = "flash"
+        aliases = ["chat-v1"]
 
           [[ladders.rungs]]
           provider = "surplus"
@@ -1117,4 +1118,67 @@ fn embeddings_config(surplus: &str) -> String {
           model = "deepseek-v4-flash"
         "#
     )
+}
+
+#[tokio::test]
+async fn serves_a_request_that_names_the_ladder_by_an_alias() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let response = ask(&router, "chat-v1").await;
+
+    assert_eq!(response.status(), 200);
+    // The ladder reports itself under its own name, so a log line stays
+    // comparable however the caller spelled the request.
+    assert_eq!(response.headers()["x-ladder-name"], "flash");
+    assert_eq!(response.headers()["x-ladder-model"], "deepseek-v4-flash");
+}
+
+#[tokio::test]
+async fn serves_a_request_carrying_a_context_variant_marker() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    for name in ["flash[1m]", "chat-v1[1m]", "Flash"] {
+        let response = ask(&router, name).await;
+
+        assert_eq!(response.status(), 200, "{name} should have routed");
+        assert_eq!(response.headers()["x-ladder-name"], "flash");
+    }
+}
+
+#[tokio::test]
+async fn a_name_that_matches_no_ladder_lists_every_spelling_that_would_have() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let response = ask(&router, "no-such-ladder").await;
+
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let message = body["error"]["message"].as_str().unwrap().to_string();
+    assert!(message.contains("no-such-ladder"), "{message}");
+    assert!(message.contains("flash"), "{message}");
+    assert!(message.contains("chat-v1"), "{message}");
+}
+
+#[tokio::test]
+async fn the_model_list_advertises_every_name_a_ladder_answers_to() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let body: serde_json::Value = reqwest::get(format!("{router}/v1/models"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let flash = &body["data"][0];
+    assert_eq!(flash["id"], "flash");
+    assert_eq!(flash["aliases"][0], "chat-v1");
 }
