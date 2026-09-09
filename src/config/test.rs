@@ -520,7 +520,7 @@ fn every_rung_of_the_shipped_deepest_ladder_asks_for_depth_itself() {
 /// ladder would step down to a cheaper model while reading as though it had
 /// not. This is the check that caught the `openrouter` backstop sitting at
 /// 1.00 while its cheapest `deepseek-v4-pro` endpoint listed at 1.20, which
-/// made every OpenRouter reasoning rung ineligible and unreachable.
+/// made every `OpenRouter` reasoning rung ineligible and unreachable.
 #[test]
 fn no_shipped_provider_ceiling_clamps_the_deepest_ladders_rungs() {
     let config = shipped_example();
