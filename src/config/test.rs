@@ -803,3 +803,218 @@ fn an_embeddings_rung_does_not_inherit_the_providers_ceiling() {
     let prose = config.ladder("prose").unwrap();
     assert_eq!(config.cap_for(prose, &prose.rungs[0]), Some(1.00));
 }
+
+/// A ladder answers to the name a request used, to a declared alias, and to
+/// either with a context-variant marker appended.
+const ALIASED: &str = r#"
+[providers.surplus]
+kind = "surplus"
+base_url = "https://api.surplusintelligence.ai"
+api_key_env = "SURPLUS_API_KEY"
+
+[[ladders]]
+name = "reasoning"
+aliases = ["reasoning-v1", "deepseek"]
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
+
+[[ladders]]
+name = "flash"
+aliases = ["chat-v1"]
+  [[ladders.rungs]]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+"#;
+
+#[test]
+fn resolves_a_ladder_by_its_own_name() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert_eq!(config.ladder("reasoning").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("flash").unwrap().name, "flash");
+}
+
+#[test]
+fn resolves_a_ladder_by_a_declared_alias() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert_eq!(config.ladder("reasoning-v1").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("deepseek").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("chat-v1").unwrap().name, "flash");
+}
+
+#[test]
+fn resolves_a_ladder_through_a_context_variant_marker() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    // The ACP client appends the variant before the request leaves it.
+    assert_eq!(config.ladder("reasoning[1m]").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("flash[1m]").unwrap().name, "flash");
+    // An alias carrying one resolves the same way.
+    assert_eq!(config.ladder("chat-v1[1m]").unwrap().name, "flash");
+}
+
+#[test]
+fn resolves_a_ladder_regardless_of_case_and_surrounding_space() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert_eq!(config.ladder("Reasoning").unwrap().name, "reasoning");
+    assert_eq!(config.ladder("  flash  ").unwrap().name, "flash");
+}
+
+#[test]
+fn prefers_an_exact_name_over_another_ladders_alias() {
+    // `flash` is a real ladder and also an alias of `reasoning`; the ladder
+    // that owns the name must win, whatever order they are declared in.
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+        aliases = ["fast"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "fast"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.ladder("fast").unwrap().name, "fast");
+}
+
+#[test]
+fn prefers_an_exact_name_over_a_variant_stripped_match() {
+    // A ladder genuinely named `reasoning[1m]` still answers to it, rather
+    // than being shadowed by the `reasoning` the marker strips down to.
+    let config = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "reasoning[1m]"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.3"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.ladder("reasoning[1m]").unwrap().name, "reasoning[1m]");
+    assert_eq!(config.ladder("reasoning").unwrap().name, "reasoning");
+}
+
+#[test]
+fn rejects_an_unknown_name_that_matches_nothing() {
+    let config = Config::parse(ALIASED).unwrap();
+
+    assert!(config.ladder("nope").is_none());
+    assert!(config.ladder("nope[1m]").is_none());
+    assert!(config.ladder("").is_none());
+}
+
+#[test]
+fn rejects_an_alias_that_collides_with_another_ladder() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+        aliases = ["flash"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "flash"
+        aliases = ["reasoning"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, Error::DuplicateLadder(name) if name == "reasoning"));
+}
+
+#[test]
+fn rejects_two_ladders_sharing_an_alias() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+        aliases = ["deep"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+
+        [[ladders]]
+        name = "flash"
+        aliases = ["deep"]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, Error::DuplicateLadder(name) if name == "deep"));
+}
+
+#[test]
+fn rejects_a_blank_alias() {
+    let error = Config::parse(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "https://api.surplusintelligence.ai"
+        api_key_env = "SURPLUS_API_KEY"
+
+        [[ladders]]
+        name = "reasoning"
+        aliases = ["  "]
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-pro"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, Error::Empty { what } if what.contains("alias")));
+}
+
+#[test]
+fn a_ladder_without_aliases_still_parses() {
+    let config = Config::parse(EXAMPLE).unwrap();
+
+    assert!(config.ladder("flash").unwrap().aliases.is_empty());
+}
