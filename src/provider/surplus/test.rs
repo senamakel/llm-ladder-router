@@ -268,6 +268,36 @@ fn the_marketplace_refusals_advance_the_ladder() {
 }
 
 #[test]
+fn a_model_that_mandates_reasoning_advances() {
+    // The exact shape seen on 2026-09-09, from `glm-5.3-flash`, `minimax-m2.5`,
+    // `minimax-m2.7` and `glm-5.3`. Whether a model can be asked to stop
+    // thinking is a fact about that model, so the rung beside it serves the
+    // identical body — which is what makes this an advance rather than a
+    // caller error.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"type":"invalid_request_error","code":"request_rejected","message":"Reasoning is mandatory for this endpoint and cannot be disabled."}}"#
+        ),
+        Disposition::Advance
+    );
+}
+
+#[test]
+fn a_genuine_caller_error_still_stops_the_ladder() {
+    // The counterpart to the advancing cases above: a 400 about the request
+    // itself is uniform across rungs, so walking the ladder would only repeat
+    // it at every rung and bill for the attempts.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"type":"invalid_request_error","code":"unknown_field","message":"unknown field `wat`"}}"#
+        ),
+        Disposition::Fail
+    );
+}
+
+#[test]
 fn a_sub_provider_schema_rejection_advances() {
     // The exact shape seen on 2026-08-24: a sub-provider that accepts only a
     // string `content` refusing an Anthropic block array, relayed as a 400.
