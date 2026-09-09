@@ -376,6 +376,9 @@ fn the_shipped_example_config_is_valid() {
         vec![
             ("surplus", "gpt-5.6-luna"),
             ("surplus", "deepseek-v4-flash"),
+            ("surplus", "glm-5.3-flash"),
+            ("surplus", "minimax-m2.5"),
+            ("openrouter", "deepseek/deepseek-v4-flash"),
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
@@ -390,9 +393,12 @@ fn the_shipped_example_config_is_valid() {
             .collect::<Vec<_>>(),
         vec![
             ("surplus", "deepseek-v4-pro"),
+            ("surplus", "glm-5.3"),
             ("surplus", "glm-5.2"),
+            ("surplus", "minimax-m2.7"),
             ("surplus", "gpt-5.6-luna"),
             ("surplus", "deepseek-v4-flash"),
+            ("openrouter", "deepseek/deepseek-v4-pro"),
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
@@ -436,7 +442,9 @@ fn the_shipped_example_config_is_valid() {
             .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
             .collect::<Vec<_>>(),
         vec![
+            ("surplus", "gpt-5.6-terra"),
             ("surplus", "deepseek-v4-pro"),
+            ("surplus", "glm-5.3"),
             ("surplus", "glm-5.2"),
             ("surplus", "gpt-5.6-luna"),
             ("openrouter", "deepseek/deepseek-v4-pro"),
@@ -452,7 +460,7 @@ fn the_shipped_example_config_is_valid() {
             .iter()
             .map(|rung| max.effort_for(rung))
             .collect::<Vec<_>>(),
-        ["high", "high", "xhigh", "high"]
+        ["high", "high", "high", "high", "xhigh", "high"]
             .map(|effort| Some(effort.to_string()))
             .to_vec()
     );
