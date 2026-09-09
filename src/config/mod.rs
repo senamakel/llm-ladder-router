@@ -152,9 +152,58 @@ impl Config {
     }
 
     /// Looks up a ladder by the name a request used.
+    ///
+    /// A caller names a *model*, and the name that arrives is rarely the one
+    /// written here: clients fold in their own vocabulary (`chat-v1` for the
+    /// cheap ladder), append a context-variant marker (`reasoning[1m]`), and
+    /// disagree about case. Matching only on the exact string turned each of
+    /// those into `unknown ladder`, and the workaround — a copy of the ladder
+    /// under every spelling — is how one configuration grew eleven ladders
+    /// serving four intents.
+    ///
+    /// So four passes, in descending order of how deliberate the match is:
+    ///
+    /// 1. the ladder's own name, exactly;
+    /// 2. a declared [`Ladder::aliases`] entry, exactly;
+    /// 3. either, with a trailing `[...]` variant marker stripped;
+    /// 4. either, folded to lowercase.
+    ///
+    /// Earlier passes win outright, so a ladder genuinely named `reasoning[1m]`
+    /// still answers to it and is never shadowed by the `reasoning` that
+    /// stripping it produces. Within a pass the first ladder declared wins,
+    /// which validation makes moot by refusing two ladders that answer to the
+    /// same name.
+    ///
+    /// Returns `None` when no pass matches; the caller reports that as an
+    /// unknown ladder rather than guessing at what was meant.
     #[must_use]
     pub fn ladder(&self, name: &str) -> Option<&Ladder> {
-        self.ladders.iter().find(|ladder| ladder.name == name)
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let stripped = strip_variant(name);
+        let folded = name.to_lowercase();
+        let folded_stripped = strip_variant(&folded).to_string();
+
+        self.find(|candidate| candidate == name)
+            .or_else(|| self.find(|candidate| candidate == stripped))
+            .or_else(|| self.find(|candidate| candidate.to_lowercase() == folded))
+            .or_else(|| self.find(|candidate| candidate.to_lowercase() == folded_stripped))
+    }
+
+    /// The first ladder with a name or alias the predicate accepts.
+    ///
+    /// A ladder's own name is offered before its aliases so that a pass which
+    /// would match both reports the ladder for the reason a reader expects.
+    fn find(&self, matches: impl Fn(&str) -> bool) -> Option<&Ladder> {
+        self.ladders.iter().find(|ladder| {
+            matches(&ladder.name)
+                || ladder
+                    .aliases
+                    .iter()
+                    .any(|alias| matches(alias.trim()))
+        })
     }
 
     /// The ceiling that applies to a rung of a ladder once its provider's
@@ -172,6 +221,25 @@ impl Config {
                 .and_then(|provider| provider.max_cost_per_1m),
         )
     }
+}
+
+/// A name with a trailing `[...]` context-variant marker removed.
+///
+/// The Claude ACP layer appends one before a request leaves it, so the ladder
+/// `reasoning` arrives as `reasoning[1m]`. The marker says which context window
+/// of the same model is wanted, which is the upstream's business rather than a
+/// different routing policy — the rungs that serve it are identical either way.
+///
+/// Only a marker that closes at the very end is removed, and never the whole
+/// name: `[1m]` alone is not a request for every ladder.
+fn strip_variant(name: &str) -> &str {
+    let Some(open) = name.strip_suffix(']').and_then(|rest| rest.rfind('[')) else {
+        return name;
+    };
+    if open == 0 {
+        return name;
+    }
+    name[..open].trim_end()
 }
 
 /// Rejects a ceiling that is not a usable amount of money.
