@@ -232,6 +232,19 @@ cost_basis = "completion"
   score_multiplier = 1.0
   max_cost_per_1m = 0.40
 
+  # The last resort, reached only once every rung above has failed or been
+  # priced out. Uncapped on purpose — it carries no ceiling and dispatches with
+  # no marketplace price filter — because the thing it is weighed against is
+  # not a cheaper rung, it is a 502.
+  #
+  # The model is chosen so that being uncapped is a bounded promise rather than
+  # a blank cheque: the worst this can cost is deepseek-v4-flash's direct rate of $0.18/1M, which
+  # is the price of never seeing `ladder exhausted` on this ladder again.
+  [ladders.fallback]
+  provider = "surplus"
+  model = "deepseek-v4-flash"
+
+
 # The reasoning ladder: the strongest model the budget allows, stepping down
 # through the mid tier and Flash rather than failing.
 
@@ -296,6 +309,19 @@ cost_basis = "completion"
   score_multiplier = 1.0
   max_cost_per_1m = 0.30
   prefer = ["deepinfra"]
+
+  # The last resort, reached only once every rung above has failed or been
+  # priced out. Uncapped on purpose — it carries no ceiling and dispatches with
+  # no marketplace price filter — because the thing it is weighed against is
+  # not a cheaper rung, it is a 502.
+  #
+  # The model is chosen so that being uncapped is a bounded promise rather than
+  # a blank cheque: the worst this can cost is deepseek-v4-pro's direct rate of $1.91/1M, which
+  # is the price of never seeing `ladder exhausted` on this ladder again.
+  [ladders.fallback]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
+
 
 # The deepest ladder: for the handful of roles whose whole output is a
 # judgement nothing mechanical can check, where thinking longer is the only
@@ -371,6 +397,19 @@ reasoning_effort = "high"
   score_multiplier = 8.0
   reasoning_effort = "high"
   max_cost_per_1m = 2.00
+
+
+  # The last resort, reached only once every rung above has failed or been
+  # priced out. Uncapped on purpose — it carries no ceiling and dispatches with
+  # no marketplace price filter — because the thing it is weighed against is
+  # not a cheaper rung, it is a 502.
+  #
+  # The model is chosen so that being uncapped is a bounded promise rather than
+  # a blank cheque: the worst this can cost is deepseek-v4-pro's direct rate of $1.91/1M, which
+  # is the price of never seeing `ladder exhausted` on this ladder again.
+  [ladders.fallback]
+  provider = "surplus"
+  model = "deepseek-v4-pro"
 
 
 # The scribe ladder: one rung, one seller, one model.
