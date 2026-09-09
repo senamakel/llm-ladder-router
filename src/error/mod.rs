@@ -32,6 +32,23 @@ pub enum Error {
         provider: String,
     },
 
+    /// A ladder fallback named a provider that the configuration does not define.
+    #[error("ladder {ladder} fallback names unknown provider {provider}")]
+    UnknownFallbackProvider {
+        /// The ladder holding the offending fallback.
+        ladder: String,
+        /// The provider name that could not be resolved.
+        provider: String,
+    },
+
+    /// An ultimate fallback declared a ceiling despite intentionally bypassing
+    /// all price filters.
+    #[error("{field} must not set a ceiling because an ultimate fallback is uncapped")]
+    FallbackCeiling {
+        /// The configuration field that carried the ceiling.
+        field: String,
+    },
+
     /// A price ceiling was not a usable positive, finite number of dollars.
     #[error("{field} must be a positive finite number of dollars")]
     InvalidPrice {

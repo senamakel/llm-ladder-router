@@ -69,10 +69,18 @@ name = "reasoning"
   provider = "openrouter"
   model = "deepseek/deepseek-v4-flash"
   max_cost_per_1m = 0.30
+
 "#;
 
 fn config() -> Config {
     Config::parse(CONFIG).unwrap()
+}
+
+fn config_with_fallback() -> Config {
+    Config::parse(&format!(
+        "{CONFIG}\n  [ladders.fallback]\n  provider = \"surplus\"\n  model = \"deepseek-v4-flash-emergency\"\n"
+    ))
+    .unwrap()
 }
 
 fn offer(provider: &str, completion_per_1m: f64) -> Offer {
@@ -135,6 +143,38 @@ fn picks_the_cheapest_rung_that_fits_rather_than_the_first() {
             .collect::<Vec<_>>(),
         vec![2, 3]
     );
+}
+
+#[test]
+fn an_ultimate_fallback_serves_when_every_normal_rung_is_priced_out() {
+    let config = config_with_fallback();
+    let ladder = config.ladder("reasoning").unwrap();
+    let table = prices(&[
+        ("surplus", "deepseek-v4-pro", 1.0),
+        ("surplus", "glm-5.2", 1.0),
+        ("surplus", "deepseek-v4-flash", 1.0),
+        ("openrouter", "deepseek/deepseek-v4-flash", 1.0),
+    ]);
+
+    let selection = select(&config, ladder, &table, &funded(), &[]);
+    let chosen = selection.chosen.unwrap();
+
+    assert_eq!(chosen.rung, ladder.rungs.len());
+    assert_eq!(chosen.model, "deepseek-v4-flash-emergency");
+    assert_eq!(chosen.cap_per_1m, None);
+    assert_eq!(selection.skipped.len(), ladder.rungs.len());
+}
+
+#[test]
+fn a_normal_rung_wins_over_an_ultimate_fallback() {
+    let config = config_with_fallback();
+    let ladder = config.ladder("reasoning").unwrap();
+
+    let chosen = select(&config, ladder, &all_affordable(), &funded(), &[])
+        .chosen
+        .unwrap();
+
+    assert_ne!(chosen.rung, ladder.rungs.len());
 }
 
 /// A multiplier is what lets a dearer rung win: at 2.0, pro is worth paying for
