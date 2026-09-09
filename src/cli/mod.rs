@@ -14,11 +14,48 @@ pub const DEFAULT_CONFIG: &str = "config.toml";
 
 /// Runs the router from the process arguments.
 ///
+/// `--check` loads and validates the configuration, then exits without
+/// binding. That is what lets a deployment script prove a config is good
+/// *before* it replaces the one currently working: installing a config the
+/// binary refuses would otherwise leave the service restart-looping against a
+/// file that has already overwritten the last one that served.
+///
 /// # Errors
 ///
-/// Returns whatever [`run_with`] returns for the resolved path.
+/// Returns whatever [`run_with`] or [`check_with`] returns for the resolved
+/// path.
 pub async fn run(args: impl Iterator<Item = String>) -> Result<()> {
-    run_with(&config_path(args)).await
+    let args: Vec<String> = args.collect();
+    let path = config_path(args.iter().cloned());
+    if args.iter().any(|arg| arg == "--check") {
+        return check_with(&path);
+    }
+    run_with(&path).await
+}
+
+/// Loads one configuration file, reports what it declares, and returns.
+///
+/// The counterpart to [`run_with`] that never binds a socket.
+///
+/// # Errors
+///
+/// Returns a configuration error if the file cannot be read or is invalid.
+pub fn check_with(path: &str) -> Result<()> {
+    let config = Config::load(path)?;
+    // Printed rather than logged: the caller of `--check` is a script or a
+    // person at a terminal wanting the answer, not a log stream.
+    println!("{path}: ok");
+    println!("  bind:      {}", config.server.bind);
+    println!("  providers: {}", config.providers.len());
+    for ladder in &config.ladders {
+        let names = if ladder.aliases.is_empty() {
+            ladder.name.clone()
+        } else {
+            format!("{} (also {})", ladder.name, ladder.aliases.join(", "))
+        };
+        println!("  ladder:    {names} — {} rungs", ladder.rungs.len());
+    }
+    Ok(())
 }
 
 /// Loads one configuration file and serves from it.
