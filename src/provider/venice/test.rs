@@ -25,7 +25,7 @@ fn chosen() -> Chosen {
 fn the_model_is_rewritten_and_the_house_system_prompt_is_declined() {
     let mut body = serde_json::json!({ "model": "uncensored", "messages": [], "temperature": 0 });
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(body["model"], "venice-uncensored-1-2");
     assert_eq!(
@@ -49,7 +49,7 @@ fn a_caller_who_set_venice_parameters_keeps_them() {
         }
     });
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(
         body["venice_parameters"]["include_venice_system_prompt"],
@@ -68,7 +68,7 @@ fn a_caller_who_set_venice_parameters_keeps_them() {
 fn a_non_object_venice_parameters_is_left_alone() {
     let mut body = serde_json::json!({ "model": "uncensored", "venice_parameters": "yes" });
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(body["model"], "venice-uncensored-1-2");
     assert_eq!(body["venice_parameters"], "yes");
@@ -78,7 +78,7 @@ fn a_non_object_venice_parameters_is_left_alone() {
 fn a_body_that_is_not_an_object_is_left_alone() {
     let mut body = serde_json::json!([1, 2, 3]);
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(body, serde_json::json!([1, 2, 3]));
 }
