@@ -85,10 +85,24 @@ impl Config {
             }
         }
 
+        // Names and aliases share one namespace, because a request cannot say
+        // which of the two it meant. Two ladders answering to one name would
+        // resolve by declaration order, which is not a policy anybody wrote
+        // down, so it is refused here instead.
         let mut seen = std::collections::BTreeSet::new();
         for ladder in &self.ladders {
-            if !seen.insert(ladder.name.as_str()) {
+            if !seen.insert(ladder.name.trim()) {
                 return Err(Error::DuplicateLadder(ladder.name.clone()));
+            }
+            for alias in &ladder.aliases {
+                if alias.trim().is_empty() {
+                    return Err(Error::Empty {
+                        what: format!("ladder {} alias", ladder.name),
+                    });
+                }
+                if !seen.insert(alias.trim()) {
+                    return Err(Error::DuplicateLadder(alias.trim().to_string()));
+                }
             }
             if ladder.rungs.is_empty() {
                 return Err(Error::Empty {
