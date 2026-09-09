@@ -293,7 +293,7 @@ fn a_genuine_caller_error_still_stops_the_ladder() {
             reqwest::StatusCode::BAD_REQUEST,
             br#"{"error":{"type":"invalid_request_error","code":"unknown_field","message":"unknown field `wat`"}}"#
         ),
-        Disposition::Fail
+        Disposition::CallerError
     );
 }
 
