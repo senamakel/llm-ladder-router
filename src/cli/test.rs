@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use super::{DEFAULT_CONFIG, config_path, init_tracing, run, run_with};
+use super::{DEFAULT_CONFIG, check_with, config_path, init_tracing, run, run_with};
 
 fn parse(args: &[&str]) -> String {
     config_path(args.iter().map(|arg| (*arg).to_string()))
