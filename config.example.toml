@@ -97,7 +97,15 @@ api_key_env = "VENICE_INFERENCE_KEY"
 kind = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
-max_cost_per_1m = 1.00
+# 2.50 rather than 1.00. The cheapest `deepseek-v4-pro` endpoint here lists at
+# 1.20/1M completion — measured 2026-09-09, and the next three are 1.74, 1.91
+# and 1.91 — so a 1.00 backstop admitted no seller at all and skipped every
+# reasoning rung on this provider. Invisible while Surplus was healthy, because
+# the ladder never reached the rung; the moment Surplus went down both deep
+# ladders came back `ladder exhausted` instead of failing over. A fallback that
+# is silently ineligible is not a fallback. Still well under the 3.30 direct
+# rate this ceiling exists to refuse.
+max_cost_per_1m = 2.50
 headers = { "HTTP-Referer" = "https://opencompany.tinyhumans.ai/", "X-OpenRouter-Title" = "OpenCompany" }
 
 # Prices observed live on 2026-09-09, USD per million output tokens, counting
