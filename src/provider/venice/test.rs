@@ -108,3 +108,31 @@ fn upstream_failures_advance_and_caller_errors_do_not() {
     );
     assert_eq!(classify(reqwest::StatusCode::OK, b""), Disposition::Served);
 }
+
+/// Venice serves embeddings, and at its own `/api/v1` root rather than `/v1`.
+///
+/// Regression test for the `vectors` ladder having no usable rung: this
+/// returned `false`, so an embeddings request was declined before the round
+/// trip and the only working embeddings provider on the fleet was unreachable.
+#[test]
+fn serves_embeddings_at_the_venice_root() {
+    assert!(serves(Wire::Embeddings));
+    assert_eq!(inference_path(Wire::Embeddings), "/api/v1/embeddings");
+}
+
+/// An embeddings body gets the model rewrite and nothing else.
+///
+/// `venice_parameters` is a chat concept — there is no conversation to prepend
+/// a system prompt to — and Venice's embeddings endpoint validates strictly, so
+/// an unknown key would be a 422. That is precisely how `mistral-embed`
+/// disqualified itself from this ladder, and it must not happen here.
+#[test]
+fn embeddings_body_carries_no_venice_parameters() {
+    let mut body = serde_json::json!({"model": "placeholder", "input": "hello"});
+    apply_routing(&mut body, &chosen(), Wire::Embeddings);
+    assert_eq!(body["model"], serde_json::json!(chosen().model));
+    assert!(
+        body.get("venice_parameters").is_none(),
+        "an embeddings request must not carry venice_parameters: {body}"
+    );
+}
