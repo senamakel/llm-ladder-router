@@ -81,10 +81,22 @@ if [ -n "$missing" ]; then
     echo "         rungs on those providers will be skipped as missing-credential" >&2
 fi
 
+# Loopback, plus the docker bridge gateway when there is one. The second is
+# what lets a *sibling container* reach the router: a client in its own
+# container cannot use the host's loopback, and publishing only there is how a
+# working deployment silently stops answering half its callers. Absent on hosts
+# with no bridge network, where the loopback binding is the whole story.
+publish="-p 127.0.0.1:$port:6969"
+bridge=$(docker network inspect bridge \
+    --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || true)
+if [ -n "$bridge" ]; then
+    publish="$publish -p $bridge:$port:6969"
+fi
+
 if [ "$check_only" = yes ]; then
     echo "image:  $image"
     echo "config: $config"
-    echo "port:   127.0.0.1:$port"
+    echo "listen: $(echo "$publish" | sed 's/-p //g')"
     echo "credentials present for:$(for v in $(required_vars); do
         eval "value=\${$v:-}"; [ -n "$value" ] && printf ' %s' "$v"; done)"
     exit 0
@@ -125,12 +137,15 @@ done
 
 docker rm -f "$name" >/dev/null 2>&1 || true
 
+# `$publish` is deliberately unquoted: it is a list of `-p host:port` flags,
+# not one argument.
+# shellcheck disable=SC2086
 docker run -d \
     --name "$name" \
     --restart always \
     --env-file "$env_file" \
     -v "$config:/etc/ladder/config.toml:ro" \
-    -p "127.0.0.1:$port:6969" \
+    $publish \
     "$image" --config /etc/ladder/config.toml >/dev/null
 
 echo "waiting for the router to load prices and balances..."
