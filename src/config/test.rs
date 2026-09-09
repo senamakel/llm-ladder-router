@@ -380,6 +380,41 @@ fn the_shipped_example_config_is_valid() {
     assert_eq!(config.server.bind, "0.0.0.0:6969");
 }
 
+/// The shipped config names its credentials and never carries one.
+///
+/// This file is committed, copied between machines, and installed onto
+/// deployments, so a literal key in it is a key in git history and in every
+/// copy. It used to carry one on `server.api_key`. Every credential is now a
+/// variable name, which is also what lets one file serve every deployment.
+#[test]
+fn the_shipped_example_config_holds_no_inline_credential() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
+        .unwrap();
+
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        assert!(
+            !line.starts_with("api_key ") && !line.starts_with("api_key="),
+            "config.example.toml:{} inlines a credential: {line}",
+            number + 1
+        );
+    }
+
+    // The caller key is still required, just named rather than written out.
+    // Without this the router accepts every caller, and the shipped bind is
+    // every interface rather than loopback.
+    let config = shipped_example();
+    assert_eq!(
+        config.server.api_key_env.as_deref(),
+        Some("LADDER_API_KEY"),
+        "the shipped config must name a caller key variable"
+    );
+    assert!(config.server.api_key.is_none());
+}
+
 /// The example is the documentation for the ladders the router ships with, so
 /// a change to any of their rungs should be deliberate rather than incidental.
 #[test]
