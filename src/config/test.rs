@@ -353,26 +353,41 @@ fn reports_the_path_when_the_file_is_missing() {
     }
 }
 
-#[test]
-fn the_shipped_example_config_is_valid() {
+/// The shipped example, parsed once for every test that asserts on it.
+fn shipped_example() -> Config {
     let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.example.toml"))
         .unwrap();
-    let config = Config::parse(&text).unwrap();
+    Config::parse(&text).unwrap()
+}
+
+/// The rungs of one ladder, as `(provider, model)` pairs in declaration order.
+fn rungs_of<'a>(config: &'a Config, ladder: &str) -> Vec<(&'a str, &'a str)> {
+    config
+        .ladder(ladder)
+        .unwrap()
+        .rungs
+        .iter()
+        .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
+        .collect()
+}
+
+#[test]
+fn the_shipped_example_config_is_valid() {
+    let config = shipped_example();
 
     // Every interface, not loopback: the example is what the container image
     // ships, and a container that binds loopback answers nobody.
     assert_eq!(config.server.bind, "0.0.0.0:6969");
+}
 
-    // The example is the documentation for the six ladders the router ships
-    // with; a change to any of them should be deliberate.
+/// The example is the documentation for the ladders the router ships with, so
+/// a change to any of their rungs should be deliberate rather than incidental.
+#[test]
+fn the_shipped_cheap_ladders_are_what_they_claim_to_be() {
+    let config = shipped_example();
+
     assert_eq!(
-        config
-            .ladder("flash")
-            .unwrap()
-            .rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        rungs_of(&config, "flash"),
         vec![
             ("surplus", "gpt-5.6-luna"),
             ("surplus", "deepseek-v4-flash"),
@@ -384,13 +399,7 @@ fn the_shipped_example_config_is_valid() {
     );
 
     assert_eq!(
-        config
-            .ladder("reasoning")
-            .unwrap()
-            .rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        rungs_of(&config, "reasoning"),
         vec![
             ("surplus", "deepseek-v4-pro"),
             ("surplus", "glm-5.3"),
@@ -402,8 +411,36 @@ fn the_shipped_example_config_is_valid() {
             ("openrouter", "deepseek/deepseek-v4-flash"),
         ]
     );
+}
 
-    // One rung, one seller, no ceiling: "this model or nothing".
+/// Every ladder ends on a provider other than the one it starts on.
+///
+/// A ladder whose rungs share one marketplace has no failover, whatever its
+/// length: the fifteen minutes Surplus spent answering `403` from its own edge
+/// took every rung of every ladder with it. The two direct-provider ladders are
+/// the deliberate exceptions — `scribe` and `uncensored` say "this model or
+/// nothing", and `vectors` has only one marketplace carrying the model at all.
+#[test]
+fn every_shipped_price_band_can_fail_over_to_a_second_provider() {
+    let config = shipped_example();
+
+    for name in ["flash", "reasoning", "max-reasoning"] {
+        let providers: std::collections::BTreeSet<&str> = rungs_of(&config, name)
+            .into_iter()
+            .map(|(provider, _)| provider)
+            .collect();
+        assert!(
+            providers.len() > 1,
+            "ladder `{name}` has no rung to fail over to: {providers:?}"
+        );
+    }
+}
+
+/// A ladder of one is how this router says "this model or nothing".
+#[test]
+fn the_shipped_single_seller_ladders_carry_no_ceiling() {
+    let config = shipped_example();
+
     let scribe = config.ladder("scribe").unwrap();
     assert_eq!(scribe.rungs.len(), 1);
     assert_eq!(scribe.rungs[0].model, "labs-leanstral-1-5");
@@ -414,11 +451,7 @@ fn the_shipped_example_config_is_valid() {
     // behind it as the rung that cannot be outbid, only fallen back to.
     let uncensored = config.ladder("uncensored").unwrap();
     assert_eq!(
-        uncensored
-            .rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        rungs_of(&config, "uncensored"),
         vec![
             ("surplus", "venice-uncensored-1.2"),
             ("venice", "venice-uncensored-1-2"),
@@ -434,13 +467,14 @@ fn the_shipped_example_config_is_valid() {
     assert_eq!(vectors.surface, Surface::Embeddings);
     assert_eq!(vectors.rungs[0].model, "venice-embed-1");
     assert_eq!(config.cap_for(vectors, &vectors.rungs[0]), None);
+}
 
-    let max = config.ladder("max-reasoning").unwrap();
+#[test]
+fn the_shipped_deepest_ladder_never_steps_down_to_a_fast_model() {
+    let config = shipped_example();
+
     assert_eq!(
-        max.rungs
-            .iter()
-            .map(|rung| (rung.provider.as_str(), rung.model.as_str()))
-            .collect::<Vec<_>>(),
+        rungs_of(&config, "max-reasoning"),
         vec![
             ("surplus", "gpt-5.6-terra"),
             ("surplus", "deepseek-v4-pro"),
@@ -451,10 +485,16 @@ fn the_shipped_example_config_is_valid() {
         ],
         "no rung of the deepest ladder may be a fast model"
     );
+}
 
-    // Every rung asks for depth, and the effort each one asks for is the one
-    // its model family accepts. Named on the rung rather than inherited, so
-    // that reading a rung tells you what it will send.
+#[test]
+fn every_rung_of_the_shipped_deepest_ladder_asks_for_depth_itself() {
+    let config = shipped_example();
+    let max = config.ladder("max-reasoning").unwrap();
+
+    // The effort each rung asks for is the one its model family accepts, named
+    // on the rung rather than inherited, so that reading a rung tells you what
+    // it will send.
     assert_eq!(
         max.rungs
             .iter()
@@ -471,11 +511,21 @@ fn the_shipped_example_config_is_valid() {
             rung.model
         );
     }
+}
 
-    // The provider ceilings must not clamp it. The tighter of the two wins, so
-    // a marketplace ceiling below a rung's own would silently undo the price
-    // this ladder was written to pay — and the ladder would step down to a
-    // cheaper model while reading as though it had not.
+/// The provider ceilings must not clamp the deepest ladder.
+///
+/// The tighter of the two wins, so a marketplace ceiling below a rung's own
+/// would silently undo the price this ladder was written to pay — and the
+/// ladder would step down to a cheaper model while reading as though it had
+/// not. This is the check that caught the `openrouter` backstop sitting at
+/// 1.00 while its cheapest `deepseek-v4-pro` endpoint listed at 1.20, which
+/// made every OpenRouter reasoning rung ineligible and unreachable.
+#[test]
+fn no_shipped_provider_ceiling_clamps_the_deepest_ladders_rungs() {
+    let config = shipped_example();
+    let max = config.ladder("max-reasoning").unwrap();
+
     for rung in &max.rungs {
         let cap = config.cap_for(max, rung).unwrap();
         assert!(
