@@ -184,6 +184,10 @@ async fn list_models(AxumState(state): AxumState<State>) -> Json<serde_json::Val
                 // So a client discovering ladders can tell which endpoint each
                 // one answers on without reading the router's configuration.
                 "surface": surface_name(ladder.surface),
+                // The other names this ladder answers to, so a client pinned to
+                // one of them can see it is served rather than concluding the
+                // model is gone.
+                "aliases": ladder.aliases,
             })
         })
         .collect();
@@ -299,11 +303,20 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
     let name = name.to_string();
 
     let Some(ladder_config) = state.config.ladder(&name) else {
-        let known: Vec<&str> = state
+        // Aliases are listed beside the names, because a caller reading this
+        // wants every spelling that would have worked, not only the canonical
+        // one.
+        let known: Vec<String> = state
             .config
             .ladders
             .iter()
-            .map(|ladder| ladder.name.as_str())
+            .map(|ladder| {
+                if ladder.aliases.is_empty() {
+                    ladder.name.clone()
+                } else {
+                    format!("{} (also {})", ladder.name, ladder.aliases.join(", "))
+                }
+            })
             .collect();
         return problem(
             StatusCode::BAD_REQUEST,
