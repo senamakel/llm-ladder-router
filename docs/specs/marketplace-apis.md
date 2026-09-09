@@ -216,4 +216,17 @@ refusal.
 | Provider | Additional signal |
 | --- | --- |
 | OpenRouter | 404 no-endpoints-satisfy-max-price; 400 `Provider returned error` |
-| Surplus | 404 `minimum_discount_not_met`; 404 `no_sellers_for_model`; 402 payment required |
+| Surplus | 404 `minimum_discount_not_met`; 404 `no_sellers_for_model`; 402 payment required; the sub-provider 400s below |
+
+A 400 from Surplus is a caller error unless it came from the sub-provider
+rather than from Surplus itself, because sellers behind one endpoint do not
+accept the same dialect and the rung beside the refusing one serves the
+identical body. Three such shapes advance: `request validation errors` /
+`Provider returned` (a seller rejecting the request's shape), `Reasoning is
+mandatory for this endpoint and cannot be disabled` (a model that will not stop
+thinking), and `The reasoning_content in the thinking mode must be passed back
+to the API` (a thinking model demanding the `reasoning_content` it emitted be
+echoed on the next turn's assistant messages — a field an ordinary OpenAI-dialect
+client does not keep, and one the router will not author on the caller's behalf).
+All three arrive typed `invalid_request_error`, so they are matched on their
+message text.
