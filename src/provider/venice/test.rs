@@ -87,7 +87,7 @@ fn a_body_that_is_not_an_object_is_left_alone() {
 fn the_openai_surface_is_the_only_one() {
     assert!(serves(Wire::OpenAi));
     assert!(!serves(Wire::Anthropic));
-    assert_eq!(inference_path(), "/api/v1/chat/completions");
+    assert_eq!(inference_path(Wire::OpenAi), "/api/v1/chat/completions");
 }
 
 /// A rate limit or an outage advances the ladder; a request the caller got
