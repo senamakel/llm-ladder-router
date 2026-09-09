@@ -25,7 +25,7 @@ fn chosen() -> Chosen {
 fn the_model_is_rewritten_and_the_house_system_prompt_is_declined() {
     let mut body = serde_json::json!({ "model": "uncensored", "messages": [], "temperature": 0 });
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(body["model"], "venice-uncensored-1-2");
     assert_eq!(
@@ -49,7 +49,7 @@ fn a_caller_who_set_venice_parameters_keeps_them() {
         }
     });
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(
         body["venice_parameters"]["include_venice_system_prompt"],
@@ -68,7 +68,7 @@ fn a_caller_who_set_venice_parameters_keeps_them() {
 fn a_non_object_venice_parameters_is_left_alone() {
     let mut body = serde_json::json!({ "model": "uncensored", "venice_parameters": "yes" });
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(body["model"], "venice-uncensored-1-2");
     assert_eq!(body["venice_parameters"], "yes");
@@ -78,7 +78,7 @@ fn a_non_object_venice_parameters_is_left_alone() {
 fn a_body_that_is_not_an_object_is_left_alone() {
     let mut body = serde_json::json!([1, 2, 3]);
 
-    apply_routing(&mut body, &chosen());
+    apply_routing(&mut body, &chosen(), Wire::OpenAi);
 
     assert_eq!(body, serde_json::json!([1, 2, 3]));
 }
@@ -87,7 +87,7 @@ fn a_body_that_is_not_an_object_is_left_alone() {
 fn the_openai_surface_is_the_only_one() {
     assert!(serves(Wire::OpenAi));
     assert!(!serves(Wire::Anthropic));
-    assert_eq!(inference_path(), "/api/v1/chat/completions");
+    assert_eq!(inference_path(Wire::OpenAi), "/api/v1/chat/completions");
 }
 
 /// A rate limit or an outage advances the ladder; a request the caller got
@@ -107,4 +107,32 @@ fn upstream_failures_advance_and_caller_errors_do_not() {
         Disposition::CallerError
     );
     assert_eq!(classify(reqwest::StatusCode::OK, b""), Disposition::Served);
+}
+
+/// Venice serves embeddings, and at its own `/api/v1` root rather than `/v1`.
+///
+/// Regression test for the `vectors` ladder having no usable rung: this
+/// returned `false`, so an embeddings request was declined before the round
+/// trip and the only working embeddings provider on the fleet was unreachable.
+#[test]
+fn serves_embeddings_at_the_venice_root() {
+    assert!(serves(Wire::Embeddings));
+    assert_eq!(inference_path(Wire::Embeddings), "/api/v1/embeddings");
+}
+
+/// An embeddings body gets the model rewrite and nothing else.
+///
+/// `venice_parameters` is a chat concept — there is no conversation to prepend
+/// a system prompt to — and Venice's embeddings endpoint validates strictly, so
+/// an unknown key would be a 422. That is precisely how `mistral-embed`
+/// disqualified itself from this ladder, and it must not happen here.
+#[test]
+fn embeddings_body_carries_no_venice_parameters() {
+    let mut body = serde_json::json!({"model": "placeholder", "input": "hello"});
+    apply_routing(&mut body, &chosen(), Wire::Embeddings);
+    assert_eq!(body["model"], serde_json::json!(chosen().model));
+    assert!(
+        body.get("venice_parameters").is_none(),
+        "an embeddings request must not carry venice_parameters: {body}"
+    );
 }
