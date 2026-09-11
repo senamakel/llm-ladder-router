@@ -396,9 +396,11 @@ another ladder. **A pin never overrides a ceiling**; it only breaks the tie
 between rungs the budget already allows.
 
 Identify a conversation with the `x-ladder-session` header, or let the router use
-what your client already sends: OpenAI's `user` field or Anthropic's
-`metadata.user_id`. Responses carry `x-ladder-session` and `x-ladder-pinned`, and
-a dropped pin is logged with the reason.
+what your client already sends. Claude Code's `x-claude-code-session-id` and
+Codex's `session-id`, `thread-id`, or `prompt_cache_key` are recognized directly;
+generic clients can use OpenAI's `user` field or Anthropic's `metadata.user_id`.
+Responses carry `x-ladder-session` and `x-ladder-pinned`, and a dropped pin is
+logged with the reason.
 
 ```toml
 [sessions]
