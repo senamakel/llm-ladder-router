@@ -39,8 +39,8 @@ enabled = true
 # conversations rather than active ones.
 ttl = "30m"
 max_entries = 10000
-# Callers can also identify a thread with OpenAI's `user` field or Anthropic's
-# `metadata.user_id`, so an unmodified client still gets sticky routing.
+# Claude Code and Codex session headers, Codex's `prompt_cache_key`, OpenAI's
+# `user`, and Anthropic's `metadata.user_id` are recognized automatically.
 header = "x-ladder-session"
 
 [credits]

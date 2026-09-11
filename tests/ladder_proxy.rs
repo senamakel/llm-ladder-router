@@ -949,6 +949,65 @@ async fn the_session_can_come_from_the_bodys_own_identifiers() {
 }
 
 #[tokio::test]
+async fn claude_code_session_headers_keep_a_conversation_pinned() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let client = reqwest::Client::new();
+    for pinned in ["false", "true"] {
+        let response = client
+            .post(format!("{router}/v1/messages"))
+            .header("x-claude-code-session-id", "claude-thread-1")
+            .json(&serde_json::json!({
+                "model": "flash",
+                "max_tokens": 16,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["x-ladder-session"], "claude-thread-1");
+        assert_eq!(response.headers()["x-ladder-pinned"], pinned);
+    }
+}
+
+#[tokio::test]
+async fn codex_session_identifiers_keep_a_conversation_pinned() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let client = reqwest::Client::new();
+    for (header, session, prompt_cache_key) in [
+        (Some("session-id"), "codex-session-1", None),
+        (Some("thread-id"), "codex-thread-1", None),
+        (None, "codex-cache-1", Some("codex-cache-1")),
+    ] {
+        for pinned in ["false", "true"] {
+            let mut request =
+                client
+                    .post(format!("{router}/v1/responses"))
+                    .json(&serde_json::json!({
+                        "model": "flash",
+                        "prompt_cache_key": prompt_cache_key,
+                        "input": "hi",
+                    }));
+            if let Some(header) = header {
+                request = request.header(header, session);
+            }
+            let response = request.send().await.unwrap();
+
+            assert_eq!(response.status(), 200);
+            assert_eq!(response.headers()["x-ladder-session"], session);
+            assert_eq!(response.headers()["x-ladder-pinned"], pinned);
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_pin_never_survives_its_rung_being_priced_out() {
     // Surplus starts affordable at 0.10 against a 0.15 ceiling.
     let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;

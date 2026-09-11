@@ -666,9 +666,9 @@ async fn remember(
 
 /// The conversation this request belongs to, if any.
 ///
-/// The configured header wins; otherwise the identifiers the two APIs already
-/// carry are used, so an unmodified client still gets sticky routing. Anthropic
-/// puts it in `metadata.user_id` and `OpenAI` in `user`.
+/// The configured header wins; otherwise native Claude Code and Codex
+/// identifiers, then the identifiers the two APIs already carry, are used so
+/// an unmodified client still gets sticky routing.
 fn session_of(state: &State, headers: &HeaderMap, body: &serde_json::Value) -> Option<String> {
     if !state.config.sessions.enabled {
         return None;
@@ -680,6 +680,14 @@ fn session_of(state: &State, headers: &HeaderMap, body: &serde_json::Value) -> O
 
     from_header
         .map(str::to_string)
+        .or_else(|| header_value(headers, "x-claude-code-session-id"))
+        .or_else(|| header_value(headers, "session-id"))
+        .or_else(|| header_value(headers, "thread-id"))
+        .or_else(|| {
+            body.get("prompt_cache_key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
         .or_else(|| {
             body.get("metadata")
                 .and_then(|metadata| metadata.get("user_id"))
@@ -693,6 +701,14 @@ fn session_of(state: &State, headers: &HeaderMap, body: &serde_json::Value) -> O
         })
         .map(|session| session.trim().to_string())
         .filter(|session| !session.is_empty())
+}
+
+/// Reads one UTF-8 request header as an owned session identifier.
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
 }
 
 /// The sub-provider a relayed response reports having served it.
