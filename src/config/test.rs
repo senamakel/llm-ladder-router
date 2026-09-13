@@ -989,6 +989,223 @@ fn an_embeddings_rung_does_not_inherit_the_providers_ceiling() {
     assert_eq!(config.cap_for(prose, &prose.rungs[0]), Some(1.00));
 }
 
+/// One media provider, for the ceiling-unit checks below.
+const MEDIA_PROVIDER: &str = r#"
+[providers.surplus]
+kind = "surplus"
+base_url = "https://api.surplusintelligence.ai"
+api_key_env = "SURPLUS_API_KEY"
+max_cost_per_1m = 1.00
+"#;
+
+/// An image model is billed per image and a video model per job, so a
+/// per-Mtok ceiling on either is a number compared against prices it does not
+/// describe. It is the likelier slip, since every other ladder spells its
+/// ceiling that way, and is refused where it is still a typo.
+#[test]
+fn rejects_a_per_token_ceiling_on_a_media_rung() {
+    for surface in ["images", "video"] {
+        let error = Config::parse(&format!(
+            r#"
+            {MEDIA_PROVIDER}
+            [[ladders]]
+            name = "media"
+            surface = "{surface}"
+              [[ladders.rungs]]
+              provider = "surplus"
+              model = "seedream-4.5"
+              max_cost_per_1m = 0.02
+            "#
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::WrongCeilingUnit { field, expected }
+                    if field.contains("max_cost_per_1m") && *expected == "max_cost_per_unit"
+            ),
+            "{surface}: {error:?}"
+        );
+    }
+}
+
+/// The reverse slip: a per-unit ceiling on a rung that is billed per token.
+#[test]
+fn rejects_a_per_unit_ceiling_on_a_token_rung() {
+    for surface in ["chat", "embeddings"] {
+        let error = Config::parse(&format!(
+            r#"
+            {MEDIA_PROVIDER}
+            [[ladders]]
+            name = "text"
+            surface = "{surface}"
+              [[ladders.rungs]]
+              provider = "surplus"
+              model = "glm-5.2"
+              max_cost_per_unit = 0.02
+            "#
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::WrongCeilingUnit { field, expected }
+                    if field.contains("max_cost_per_unit") && *expected == "max_cost_per_1m"
+            ),
+            "{surface}: {error:?}"
+        );
+    }
+}
+
+/// A per-unit ceiling is money too: zero, negative and `NaN` are refused for
+/// the same reason a per-token one is.
+#[test]
+fn rejects_a_per_unit_ceiling_that_is_not_a_usable_amount() {
+    let error = Config::parse(&format!(
+        r#"
+        {MEDIA_PROVIDER}
+        [[ladders]]
+        name = "image"
+        surface = "images"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "seedream-4.5"
+          max_cost_per_unit = 0.0
+        "#
+    ))
+    .unwrap_err();
+
+    assert!(
+        matches!(&error, Error::InvalidPrice { field } if field.contains("max_cost_per_unit")),
+        "{error:?}"
+    );
+}
+
+/// A media rung's ceiling is its own, in its own unit. The provider's per-Mtok
+/// ceiling is neither inherited nor folded in: a number in the wrong unit is
+/// not a looser limit, and a small one would silently price out every seller.
+#[test]
+fn a_media_rung_takes_its_own_ceiling_and_not_the_providers() {
+    let config = Config::parse(&format!(
+        r#"
+        {MEDIA_PROVIDER}
+        [[ladders]]
+        name = "image"
+        surface = "images"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "seedream-4.5"
+          max_cost_per_unit = 0.02
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-flux-2-max"
+        "#
+    ))
+    .unwrap();
+
+    let image = config.ladder("image").unwrap();
+    assert_eq!(config.cap_for(image, &image.rungs[0]), Some(0.02));
+    // Uncapped, rather than capped at the provider's $1.00/Mtok.
+    assert_eq!(config.cap_for(image, &image.rungs[1]), None);
+    assert!(image.surface.is_media());
+    assert_eq!(image.surface.price_unit(), PriceUnit::MediaUnit);
+    assert_eq!(PriceUnit::MediaUnit.to_string(), "unit");
+    assert_eq!(PriceUnit::MillionTokens.to_string(), "Mtok");
+}
+
+/// A fallback is uncapped by definition, in either unit; a direct provider has
+/// no order book to check a per-unit ceiling against any more than a per-token
+/// one.
+#[test]
+fn a_per_unit_ceiling_is_refused_where_a_per_token_one_would_be() {
+    let on_fallback = Config::parse(&format!(
+        r#"
+        {MEDIA_PROVIDER}
+        [[ladders]]
+        name = "image"
+        surface = "images"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "seedream-4.5"
+          [ladders.fallback]
+          provider = "surplus"
+          model = "seedream-4.5"
+          max_cost_per_unit = 0.02
+        "#
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(&on_fallback, Error::FallbackCeiling { .. }),
+        "{on_fallback:?}"
+    );
+
+    let on_direct = Config::parse(
+        r#"
+        [providers.venice]
+        kind = "venice"
+        base_url = "https://api.venice.ai"
+        api_key_env = "VENICE_INFERENCE_KEY"
+
+        [[ladders]]
+        name = "image"
+        surface = "images"
+          [[ladders.rungs]]
+          provider = "venice"
+          model = "flux"
+          max_cost_per_unit = 0.02
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&on_direct, Error::UnpriceableCeiling { provider, .. } if provider == "venice"),
+        "{on_direct:?}"
+    );
+}
+
+/// `request_defaults` fills in what the caller left out and nothing else: a
+/// field the caller sent keeps its value, whatever the ladder would have
+/// preferred, and every TOML type comes through as its JSON counterpart.
+#[test]
+fn request_defaults_fill_only_the_fields_the_caller_omitted() {
+    let config = Config::parse(&format!(
+        r#"
+        {MEDIA_PROVIDER}
+        [[ladders]]
+        name = "image"
+        surface = "images"
+          [ladders.request_defaults]
+          size = "1024x1024"
+          n = 1
+          quality = "high"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "seedream-4.5"
+        "#
+    ))
+    .unwrap();
+    let image = config.ladder("image").unwrap();
+
+    let mut body = serde_json::json!({ "prompt": "x", "quality": "low" });
+    image.apply_request_defaults(&mut body);
+    assert_eq!(body["size"], "1024x1024");
+    assert_eq!(body["n"], 1);
+    assert_eq!(body["quality"], "low");
+    assert_eq!(body["prompt"], "x");
+
+    // A body that is not an object is left alone rather than replaced.
+    let mut not_an_object = serde_json::json!("prompt");
+    image.apply_request_defaults(&mut not_an_object);
+    assert_eq!(not_an_object, serde_json::json!("prompt"));
+
+    // A ladder that declares none changes nothing.
+    let flash = Config::parse(EXAMPLE).unwrap();
+    let mut untouched = serde_json::json!({ "messages": [] });
+    flash.ladder("flash").unwrap().apply_request_defaults(&mut untouched);
+    assert_eq!(untouched, serde_json::json!({ "messages": [] }));
+}
+
 /// A ladder answers to the name a request used, to a declared alias, and to
 /// either with a context-variant marker appended.
 const ALIASED: &str = r#"
