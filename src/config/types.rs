@@ -368,7 +368,7 @@ pub enum CostBasis {
 /// differ, and pointing one at the other's endpoint is a 400 nothing downstream
 /// can recover from. Declaring the surface is what lets the router refuse that
 /// at the door — and at load time, refuse a ceiling the embeddings surface
-/// cannot enforce.
+/// cannot enforce, or one written in the wrong unit for a media surface.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Surface {
@@ -380,6 +380,36 @@ pub enum Surface {
     /// There is no Anthropic counterpart, so this surface has exactly one wire
     /// format.
     Embeddings,
+    /// `OpenAI`-format image generation, at `/v1/images/generations`.
+    ///
+    /// Priced per image (or per megapixel) rather than per token, which is why
+    /// its rungs carry [`Rung::max_cost_per_unit`] and not
+    /// [`Rung::max_cost_per_1m`].
+    Images,
+    /// Video generation, at `/v1/video/generations`.
+    ///
+    /// Asynchronous upstream: the request answers with a job, and the job is
+    /// polled and cancelled through `GET` and `DELETE` on the same path plus
+    /// its id. Priced per job.
+    Video,
+}
+
+/// What a ceiling on a surface is denominated in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriceUnit {
+    /// USD per million tokens, the token surfaces' unit.
+    MillionTokens,
+    /// USD per media unit — an image, a megapixel, or a video job.
+    MediaUnit,
+}
+
+impl std::fmt::Display for PriceUnit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MillionTokens => formatter.write_str("Mtok"),
+            Self::MediaUnit => formatter.write_str("unit"),
+        }
+    }
 }
 
 impl Surface {
@@ -388,12 +418,36 @@ impl Surface {
     /// Neither marketplace publishes a price filter for embeddings — Surplus's
     /// `/min{N}/` prefix 404s on `/v1/embeddings`, and `OpenRouter` has no
     /// embedding models at all — so a ceiling here would be a number that reads
-    /// like a limit and binds nothing.
+    /// like a limit and binds nothing. The same prefix does exist on both media
+    /// routes, so those are capped like chat, only in a different unit.
     #[must_use]
     pub fn is_cappable(self) -> bool {
         match self {
-            Self::Chat => true,
+            Self::Chat | Self::Images | Self::Video => true,
             Self::Embeddings => false,
+        }
+    }
+
+    /// Whether this surface is billed per media unit rather than per token.
+    ///
+    /// Decides which ceiling field a rung may carry, whether the provider's
+    /// per-token ceiling is inherited, and how a price is labelled when a skip
+    /// is explained.
+    #[must_use]
+    pub fn is_media(self) -> bool {
+        match self {
+            Self::Images | Self::Video => true,
+            Self::Chat | Self::Embeddings => false,
+        }
+    }
+
+    /// The unit a ceiling on this surface is written in.
+    #[must_use]
+    pub fn price_unit(self) -> PriceUnit {
+        if self.is_media() {
+            PriceUnit::MediaUnit
+        } else {
+            PriceUnit::MillionTokens
         }
     }
 }
@@ -439,6 +493,15 @@ pub struct Ladder {
     /// A caller that sets `reasoning_effort` (or `reasoning`) itself always
     /// wins; see [`Rung::effective_reasoning_effort`].
     pub reasoning_effort: Option<String>,
+    /// Fields injected into every request that did not already carry them.
+    ///
+    /// A default rather than an override: a caller who sets the field keeps
+    /// their value. It exists so a media ladder can be square by policy —
+    /// `size = "1024x1024"` on an images ladder, `aspect_ratio = "1:1"` on a
+    /// video one — without every caller having to know each surface's spelling
+    /// of it, but nothing restricts it to those fields or those surfaces.
+    #[serde(default)]
+    pub request_defaults: BTreeMap<String, toml::Value>,
     /// The rungs, tried first to last.
     pub rungs: Vec<Rung>,
     /// An uncapped rung attempted only after every normal rung is unavailable
@@ -458,12 +521,41 @@ impl Ladder {
     /// refused at load time, and an inherited provider ceiling is dropped here
     /// rather than silently skipping every rung for want of a filter that does
     /// not exist.
+    ///
+    /// A media ladder's ceiling is the rung's own [`Rung::max_cost_per_unit`],
+    /// in USD per image or per job. The provider ceiling is in USD per million
+    /// tokens and is not inherited: a number in the wrong unit is not a looser
+    /// limit, it is no limit at all, and one that happened to be small would
+    /// silently price out every seller.
     #[must_use]
     pub fn cap_for(&self, rung: &Rung, provider_cap: Option<f64>) -> Option<f64> {
         if !self.surface.is_cappable() {
             return None;
         }
+        if self.surface.is_media() {
+            return rung.max_cost_per_unit;
+        }
         rung.effective_cap(provider_cap)
+    }
+
+    /// Fills in every [`Ladder::request_defaults`] field the body lacks.
+    ///
+    /// Only a JSON object is touched, and only keys it does not already have;
+    /// a caller's own value always wins.
+    pub fn apply_request_defaults(&self, body: &mut serde_json::Value) {
+        let Some(object) = body.as_object_mut() else {
+            return;
+        };
+        for (key, value) in &self.request_defaults {
+            if object.contains_key(key) {
+                continue;
+            }
+            // A TOML value is a strict subset of what JSON can carry, so this
+            // conversion cannot fail for anything the parser accepted; the
+            // fallback is unreachable and only keeps the signature total.
+            let value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
+            object.insert(key.clone(), value);
+        }
     }
 
     /// The effort that applies to one of this ladder's rungs.
@@ -484,7 +576,17 @@ pub struct Rung {
     /// The most this rung may pay, in USD per million tokens. A rung with no
     /// ceiling of its own inherits the provider's, and a rung with neither
     /// admits any seller and is the quality preference.
+    ///
+    /// Only on a token surface; a media rung is refused at load time for
+    /// carrying one, because per-Mtok is not the unit it is billed in.
     pub max_cost_per_1m: Option<f64>,
+    /// The most this rung may pay per media unit — per image on an images
+    /// ladder, per job on a video ladder — in USD.
+    ///
+    /// Only on a media surface, and never inherited from the provider, whose
+    /// ceiling is per million tokens. Enforced the same way as the token
+    /// ceiling: restated as a minimum discount off the model's direct price.
+    pub max_cost_per_unit: Option<f64>,
     /// Sub-providers to prefer when the marketplace supports steering.
     #[serde(default)]
     pub prefer: Vec<String>,
