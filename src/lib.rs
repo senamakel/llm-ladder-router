@@ -66,7 +66,8 @@ pub mod proxy;
 pub mod session;
 
 pub use config::{
-    Config, CostBasis, Ladder, Provider, ProviderKind, RateLimits, Rung, Sessions, Surface,
+    Config, CostBasis, Ladder, PriceUnit, Provider, ProviderKind, RateLimits, Rung, Sessions,
+    Surface,
 };
 pub use cooldown::{Cooldowns, Cooled};
 pub use credits::CreditState;
