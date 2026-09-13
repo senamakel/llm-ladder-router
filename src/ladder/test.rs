@@ -6,6 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::config::PriceUnit;
 use crate::cooldown::Cooldowns;
 use crate::pricing::{ModelPrices, Offer};
 

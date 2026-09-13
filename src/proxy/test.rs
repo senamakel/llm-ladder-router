@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::config::PriceUnit;
 use crate::ladder::SkipReason;
 
 /// A provider deliberately pointed at a closed loopback port.
