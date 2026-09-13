@@ -1,4 +1,5 @@
-//! The `OpenAI`- and Anthropic-compatible HTTP surfaces, and the failover loop.
+//! The `OpenAI`- and Anthropic-compatible HTTP surfaces, the media surfaces,
+//! and the failover loop.
 //!
 //! A request names a ladder in its `model` field. The router ranks that
 //! ladder's rungs, dispatches to the best one that can serve, and on any
@@ -15,14 +16,15 @@ mod types;
 
 pub use refresh::{refresh_credits_once, refresh_prices_once};
 pub use types::{
-    HEADER_CAP, HEADER_EFFORT, HEADER_LADDER, HEADER_MODEL, HEADER_PINNED, HEADER_PROVIDER,
-    HEADER_RUNG, HEADER_SCORE, HEADER_SESSION, HEADER_SKIPPED, HEADER_SUB_PROVIDER, State,
+    HEADER_CAP, HEADER_CAP_PER_UNIT, HEADER_EFFORT, HEADER_LADDER, HEADER_MODEL, HEADER_PINNED,
+    HEADER_PROVIDER, HEADER_RUNG, HEADER_SCORE, HEADER_SESSION, HEADER_SKIPPED,
+    HEADER_SUB_PROVIDER, State,
 };
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use axum::extract::{Json, State as AxumState};
+use axum::extract::{Json, Path, State as AxumState};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -33,7 +35,7 @@ use crate::credits::CreditState;
 use crate::error::{Error, Result};
 use crate::ladder::{self, Chosen, Skipped};
 use crate::pricing::PriceTable;
-use crate::provider::{Client, Disposition, Wire};
+use crate::provider::{Client, Disposition, Wire, surplus};
 use crate::session::{Pin, SessionPins};
 
 /// Builds the router's HTTP application and shared state.
@@ -105,6 +107,15 @@ pub fn build_with_credentials(
         .route("/v1/messages", post(messages))
         .route("/v1/responses", post(responses))
         .route("/v1/embeddings", post(embeddings))
+        // The two media surfaces. Video is a job upstream, so its path also
+        // answers `GET` and `DELETE` for polling and cancelling; both are
+        // relayed to whichever provider knows the job.
+        .route("/v1/images/generations", post(images))
+        .route("/v1/video/generations", post(video))
+        .route(
+            "/v1/video/generations/{id}",
+            get(video_job_poll).delete(video_job_cancel),
+        )
         .route("/v1/models", get(list_models))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(state.clone());
@@ -240,6 +251,129 @@ async fn embeddings(
     route(state, &headers, body, Wire::Embeddings).await
 }
 
+/// The `OpenAI`-compatible image-generation entry point.
+///
+/// Prompt in, image out, on a body the router looks into only to fill in the
+/// ladder's `request_defaults` — which is how an images ladder is square by
+/// policy rather than by every caller remembering `size`.
+async fn images(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    route(state, &headers, body, Wire::Images).await
+}
+
+/// The video-generation entry point.
+///
+/// The response is a job, not a clip: the upstream answers as soon as the job
+/// is queued, and the caller polls [`video_job_poll`] until it finishes. The
+/// ladder is walked once, here, when the job is submitted; the poll goes to
+/// the provider that took it.
+async fn video(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    route(state, &headers, body, Wire::Video).await
+}
+
+/// Polls a video job.
+async fn video_job_poll(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    relay_video_job(&state, &headers, reqwest::Method::GET, &id).await
+}
+
+/// Cancels a video job.
+async fn video_job_cancel(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    relay_video_job(&state, &headers, reqwest::Method::DELETE, &id).await
+}
+
+/// Relays a video job's poll or cancel to the provider that holds it.
+///
+/// The router keeps no table of jobs. The marketplace owns the job and names
+/// its own `poll_url`, so the only question is *which* provider, and the
+/// answer is found by asking each one that serves the video surface, in
+/// configuration order, and returning the first answer that is not a 404. With
+/// one such provider that is one round trip; a router restarted between submit
+/// and poll loses nothing.
+///
+/// A job id is a path segment the upstream will interpret, so anything that
+/// could escape the job's own path — a slash, a query, a dot-segment — is
+/// refused here rather than relayed.
+async fn relay_video_job(
+    state: &State,
+    headers: &HeaderMap,
+    method: reqwest::Method,
+    id: &str,
+) -> Response {
+    if !authorized(state, headers) {
+        return problem(
+            StatusCode::UNAUTHORIZED,
+            "missing or invalid api key; send it as Authorization: Bearer <key> or x-api-key",
+            &[],
+        );
+    }
+    if !is_job_id(id) {
+        return problem(StatusCode::BAD_REQUEST, "malformed video job id", &[]);
+    }
+
+    let path = surplus::video_job_path(id);
+    let mut asked = 0_usize;
+    for client in state
+        .clients
+        .values()
+        .filter(|client| client.serves(Wire::Video) && client.has_credential())
+    {
+        asked += 1;
+        match client.relay(method.clone(), &path).await {
+            Ok(dispatched) if dispatched.status == StatusCode::NOT_FOUND => {}
+            Ok(dispatched) => {
+                return relayed(&dispatched, |_| {
+                    problem(
+                        StatusCode::BAD_GATEWAY,
+                        "upstream response could not be relayed",
+                        &[],
+                    )
+                });
+            }
+            Err(error) => {
+                tracing::warn!(provider = client.name(), error = %error, "video job relay failed");
+            }
+        }
+    }
+
+    if asked == 0 {
+        return problem(
+            StatusCode::BAD_GATEWAY,
+            "no configured provider serves the video surface",
+            &[],
+        );
+    }
+    problem(StatusCode::NOT_FOUND, &format!("no provider knows video job {id}"), &[])
+}
+
+/// Whether a caller-supplied job id is safe to place in an upstream path.
+///
+/// Surplus ids are ULIDs, but the check is looser than that on purpose: any
+/// run of URL-safe characters that cannot begin a new path segment or a query
+/// is fine, and a stricter rule would only refuse a valid id from a marketplace
+/// that spells them differently.
+fn is_job_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
 /// Checks the caller's key against the configured one.
 ///
 /// Both header spellings are accepted on both surfaces, so a client configured
@@ -272,6 +406,8 @@ fn serves(surface: Surface, wire: Wire) -> bool {
     match surface {
         Surface::Chat => matches!(wire, Wire::OpenAi | Wire::Anthropic | Wire::Responses),
         Surface::Embeddings => wire == Wire::Embeddings,
+        Surface::Images => wire == Wire::Images,
+        Surface::Video => wire == Wire::Video,
     }
 }
 
@@ -280,6 +416,8 @@ fn surface_name(surface: Surface) -> &'static str {
     match surface {
         Surface::Chat => "chat",
         Surface::Embeddings => "embeddings",
+        Surface::Images => "images",
+        Surface::Video => "video",
     }
 }
 
@@ -351,7 +489,16 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
     // belonging to a different ladder on the next request that spelled it
     // differently.
     let name = ladder_config.name.clone();
-    let session = session_of(&state, headers, &body);
+    // A media request has no prompt cache to keep warm, and its `user` field —
+    // the one OpenAI-shaped identifier it might carry — would otherwise pin the
+    // caller's next image to whichever seller drew their last one.
+    let session = if wire.is_media() {
+        None
+    } else {
+        session_of(&state, headers, &body)
+    };
+    let mut body = body;
+    ladder_config.apply_request_defaults(&mut body);
     walk(&state, ladder_config, &name, session, body, wire).await
 }
 
@@ -417,7 +564,7 @@ async fn walk(
 
                 return with_routing_headers(
                     response,
-                    name,
+                    ladder_config,
                     &chosen,
                     passed.len(),
                     session.as_deref(),
@@ -453,7 +600,7 @@ async fn walk(
             Attempt::CallerError(response) => {
                 return with_routing_headers(
                     response,
-                    name,
+                    ladder_config,
                     &chosen,
                     passed.len(),
                     session.as_deref(),
@@ -585,30 +732,13 @@ async fn dispatch(
     };
 
     let disposition = client.classify(&dispatched);
-    let mut response = Response::builder().status(dispatched.status);
-    if let Some(content_type) = &dispatched.content_type
-        && let Ok(value) = HeaderValue::from_str(content_type)
-    {
-        response = response.header(axum::http::header::CONTENT_TYPE, value);
-    }
-    if let Some(served_by) = &dispatched.served_by
-        && let Ok(value) = HeaderValue::from_str(served_by)
-    {
-        response = response.header(types::HEADER_SUB_PROVIDER, value);
-    }
-
-    let built = response
-        .body(axum::body::Body::from(dispatched.body.clone()))
-        .map_or_else(
-            |_| {
-                problem(
-                    StatusCode::BAD_GATEWAY,
-                    "upstream response could not be relayed",
-                    &[],
-                )
-            },
-            IntoResponse::into_response,
-        );
+    let built = relayed(&dispatched, |_| {
+        problem(
+            StatusCode::BAD_GATEWAY,
+            "upstream response could not be relayed",
+            &[],
+        )
+    });
 
     match disposition {
         Disposition::Served => Attempt::Served(built),
@@ -631,6 +761,32 @@ async fn dispatch(
             },
         },
     }
+}
+
+/// Turns an upstream answer into the response the caller sees, status, body
+/// and content type unchanged, with the sub-provider that served named in a
+/// header.
+///
+/// `or_else` supplies the response for the one failure — a body the framework
+/// refuses to carry — so this stays total.
+fn relayed(
+    dispatched: &crate::provider::Dispatched,
+    or_else: impl FnOnce(axum::http::Error) -> Response,
+) -> Response {
+    let mut response = Response::builder().status(dispatched.status);
+    if let Some(content_type) = &dispatched.content_type
+        && let Ok(value) = HeaderValue::from_str(content_type)
+    {
+        response = response.header(axum::http::header::CONTENT_TYPE, value);
+    }
+    if let Some(served_by) = &dispatched.served_by
+        && let Ok(value) = HeaderValue::from_str(served_by)
+    {
+        response = response.header(types::HEADER_SUB_PROVIDER, value);
+    }
+    response
+        .body(axum::body::Body::from(dispatched.body.clone()))
+        .map_or_else(or_else, IntoResponse::into_response)
 }
 
 /// Pins a conversation to the rung and sub-provider that just served it.
@@ -721,22 +877,31 @@ fn sub_provider_of(response: &Response) -> Option<String> {
 }
 
 /// Stamps a response with the decision that produced it.
+///
+/// The ceiling header is named for its unit — per Mtok on a token surface, per
+/// image or job on a media one — so a reader never has to know the ladder to
+/// know what the number means.
 fn with_routing_headers(
     mut response: Response,
-    ladder: &str,
+    ladder: &crate::config::Ladder,
     chosen: &Chosen,
     skipped: usize,
     session: Option<&str>,
     pinned: bool,
 ) -> Response {
     let headers = response.headers_mut();
-    set(headers, types::HEADER_LADDER, ladder);
+    set(headers, types::HEADER_LADDER, &ladder.name);
     set(headers, types::HEADER_RUNG, &chosen.rung.to_string());
     set(headers, types::HEADER_PROVIDER, &chosen.provider);
     set(headers, types::HEADER_MODEL, &chosen.model);
     set(headers, types::HEADER_SKIPPED, &skipped.to_string());
     if let Some(cap) = chosen.cap_per_1m {
-        set(headers, types::HEADER_CAP, &cap.to_string());
+        let header = if ladder.surface.is_media() {
+            types::HEADER_CAP_PER_UNIT
+        } else {
+            types::HEADER_CAP
+        };
+        set(headers, header, &cap.to_string());
     }
     if let Some(effort) = &chosen.reasoning_effort {
         set(headers, types::HEADER_EFFORT, effort);
