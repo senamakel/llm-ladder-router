@@ -108,6 +108,7 @@ fn an_exhausted_ladder_explains_every_rung_it_passed_over() {
             reason: SkipReason::NoSellerUnderCap {
                 cap_per_1m: 0.30,
                 cheapest_per_1m: Some(0.63),
+                unit: PriceUnit::MillionTokens,
             },
         },
         Skipped {

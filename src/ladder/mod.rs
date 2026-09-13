@@ -304,6 +304,7 @@ fn admit(
             // price decision.
             cap_per_1m: cap.unwrap_or(f64::INFINITY),
             cheapest_per_1m: model_prices.floor(ladder.cost_basis),
+            unit: ladder.surface.price_unit(),
         });
     }
 
