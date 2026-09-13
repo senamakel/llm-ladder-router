@@ -165,11 +165,11 @@ impl Config {
             rung.max_cost_per_unit,
             &format!("ladder {} rung {index} max_cost_per_unit", ladder.name),
         )?;
-        // Each surface is billed in one unit, and a ceiling written in
-        // the other is not a looser or tighter limit — it is a number
-        // that will be compared against prices it does not describe.
-        // A per-Mtok figure on a per-image rung is the likelier slip,
-        // since every other ladder in the file spells it that way.
+        // Each surface is billed in one unit, and a ceiling written in the
+        // other is not a looser or tighter limit — it is a number that will be
+        // compared against prices it does not describe. A per-Mtok figure on a
+        // per-image rung is the likelier slip, since every other ladder in the
+        // file spells it that way.
         if ladder.surface.is_media() && rung.max_cost_per_1m.is_some() {
             return Err(Error::WrongCeilingUnit {
                 field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
@@ -193,13 +193,12 @@ impl Config {
                 provider: rung.provider.clone(),
             });
         }
-        // A ceiling on the embeddings surface has nothing to bind
-        // against: no marketplace publishes a price filter for it. The
-        // provider's own ceiling is dropped silently by
-        // [`Ladder::cap_for`] because it was written for the chat
-        // ladders and inherited by accident, but one written here was
-        // meant, and a limit that never limits anything is worth
-        // refusing where it is still a typo.
+        // A ceiling on the embeddings surface has nothing to bind against: no
+        // marketplace publishes a price filter for it. The provider's own
+        // ceiling is dropped silently by [`Ladder::cap_for`] because it was
+        // written for the chat ladders and inherited by accident, but one
+        // written here was meant, and a limit that never limits anything is
+        // worth refusing where it is still a typo.
         if !ladder.surface.is_cappable() && rung.max_cost_per_1m.is_some() {
             return Err(Error::UncappableSurface {
                 field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
