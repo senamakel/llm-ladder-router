@@ -236,44 +236,25 @@ but lists none, so a rung pointed there has nothing to serve it.
 ## Images and video
 
 Surplus resells image and video generation through the same order books, so a
-ladder can be declared for either surface and gets the same ranking, ceilings,
-failover and cooldowns:
-
-```toml
-[[ladders]]
-name = "image"
-surface = "images"
-
-  [ladders.request_defaults]
-  size = "1024x1024"
-
-  [[ladders.rungs]]
-  provider = "surplus"
-  model = "seedream-4.5"
-  max_cost_per_unit = 0.02
-```
-
-Three things differ, all of them facts about how media is sold:
+ladder declared with `surface = "images"` or `surface = "video"` gets the same
+ranking, ceilings, failover and cooldowns as a chat one. Three things differ,
+all of them facts about how media is sold:
 
 - **Ceilings are per unit.** An image model is quoted per image and a video
-  model per job, so a media rung takes `max_cost_per_unit` in USD per image or
-  per clip; `max_cost_per_1m` there is refused at load time, as is the reverse,
-  and the provider's per-Mtok ceiling is not inherited. The ceiling still binds
-  through Surplus's `/min{N}/` prefix, which exists on both media routes.
+  model per job, so a media rung takes `max_cost_per_unit` (USD per image or
+  per clip) instead of `max_cost_per_1m`; each is refused on the other's
+  surface, and the provider's per-Mtok ceiling is not inherited. The ceiling
+  still binds through Surplus's `/min{N}/` prefix.
 - **Video is a job.** `POST /v1/video/generations` answers at once with a
   `media.job`; poll `GET /v1/video/generations/{id}` until it finishes, or
-  `DELETE` it to cancel. The router walks the ladder at submission and relays
-  the poll and the cancel to the provider that took the job, keeping no table
-  of its own.
-- **Square by default.** `request_defaults` fills in fields the caller left
-  out — `size = "1024x1024"` for images, `aspect_ratio = "1:1"` for video — and
-  never overrides one they sent.
+  `DELETE` it to cancel. Both are relayed to the provider that took the job.
+- **Square by default.** A ladder's `request_defaults` table fills in fields
+  the caller left out — `size = "1024x1024"` for images, `aspect_ratio = "1:1"`
+  for video — and never overrides one they sent.
 
-Only Surplus carries either surface; a rung on any other provider declines
-before the round trip and the ladder advances. For a model that can *look at*
-the result, the example configuration's `vision` ladder is an ordinary chat
-ladder whose rungs all take image and video input. Details, including what was
-verified against the live API, are in
+Only Surplus carries either surface; a rung elsewhere declines before the round
+trip. The example configuration's `vision` ladder is an ordinary chat ladder
+whose rungs all read image and video input, for looking at the result. See
 [`docs/specs/media-generation.md`](docs/specs/media-generation.md).
 
 ## Scoring
