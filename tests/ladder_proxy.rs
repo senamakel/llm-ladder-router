@@ -1347,7 +1347,9 @@ async fn surplus_video(
         recorded.paths.push(uri.path().to_string());
     }
     match &state.behavior {
-        Behavior::Serve(_) => (StatusCode::OK, Json(video_job("queued"))),
+        // The live API answers a queued job with 202, and the router relays
+        // the status as it relays everything else.
+        Behavior::Serve(_) => (StatusCode::ACCEPTED, Json(video_job("queued"))),
         behavior @ Behavior::Fail(..) => respond(behavior),
     }
 }
@@ -1556,7 +1558,7 @@ async fn a_video_request_submits_a_job_that_can_be_polled_and_cancelled() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
     assert_eq!(
         response.headers()["x-ladder-model"],
         "kling-o3-pro-text-to-video"
