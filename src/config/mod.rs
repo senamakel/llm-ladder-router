@@ -8,8 +8,8 @@
 mod types;
 
 pub use types::{
-    Config, CostBasis, Credits, Ladder, Pricing, Provider, ProviderKind, RateLimits, Rung, Server,
-    Sessions, Surface,
+    Config, CostBasis, Credits, Ladder, PriceUnit, Pricing, Provider, ProviderKind, RateLimits,
+    Rung, Server, Sessions, Surface,
 };
 
 use crate::error::{Error, Result};
@@ -58,6 +58,9 @@ impl Config {
     ///   or one of its rungs, where no order book exists to check it against.
     /// - [`Error::UncappableSurface`] if a ceiling is set on a rung of an
     ///   embeddings ladder, where no marketplace publishes a price filter.
+    /// - [`Error::WrongCeilingUnit`] if a rung's ceiling is in the other
+    ///   surface's unit: `max_cost_per_1m` on a media ladder, or
+    ///   `max_cost_per_unit` on a token one.
     /// - [`Error::FallbackCeiling`] if an ultimate fallback declares a ceiling,
     ///   which it would intentionally bypass.
     /// - [`Error::Empty`] if a declared `reasoning_effort` is blank, which would
@@ -111,6 +114,27 @@ impl Config {
                     rung.max_cost_per_1m,
                     &format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
                 )?;
+                check_price(
+                    rung.max_cost_per_unit,
+                    &format!("ladder {} rung {index} max_cost_per_unit", ladder.name),
+                )?;
+                // Each surface is billed in one unit, and a ceiling written in
+                // the other is not a looser or tighter limit — it is a number
+                // that will be compared against prices it does not describe.
+                // A per-Mtok figure on a per-image rung is the likelier slip,
+                // since every other ladder in the file spells it that way.
+                if ladder.surface.is_media() && rung.max_cost_per_1m.is_some() {
+                    return Err(Error::WrongCeilingUnit {
+                        field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+                        expected: "max_cost_per_unit",
+                    });
+                }
+                if !ladder.surface.is_media() && rung.max_cost_per_unit.is_some() {
+                    return Err(Error::WrongCeilingUnit {
+                        field: format!("ladder {} rung {index} max_cost_per_unit", ladder.name),
+                        expected: "max_cost_per_1m",
+                    });
+                }
                 check_effort(
                     rung.reasoning_effort.as_deref(),
                     &format!("ladder {} rung {index} reasoning_effort", ladder.name),
@@ -122,14 +146,14 @@ impl Config {
                     rung.score_multiplier,
                     &format!("ladder {} rung {index} score_multiplier", ladder.name),
                 )?;
-                if rung.max_cost_per_1m.is_some()
+                if (rung.max_cost_per_1m.is_some() || rung.max_cost_per_unit.is_some())
                     && self
                         .providers
                         .get(&rung.provider)
                         .is_some_and(|provider| !provider.kind.is_marketplace())
                 {
                     return Err(Error::UnpriceableCeiling {
-                        field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+                        field: format!("ladder {} rung {index} ceiling", ladder.name),
                         provider: rung.provider.clone(),
                     });
                 }
@@ -153,9 +177,9 @@ impl Config {
                         provider: fallback.provider.clone(),
                     });
                 }
-                if fallback.max_cost_per_1m.is_some() {
+                if fallback.max_cost_per_1m.is_some() || fallback.max_cost_per_unit.is_some() {
                     return Err(Error::FallbackCeiling {
-                        field: format!("ladder {} fallback max_cost_per_1m", ladder.name),
+                        field: format!("ladder {} fallback ceiling", ladder.name),
                     });
                 }
                 check_effort(
