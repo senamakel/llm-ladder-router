@@ -122,6 +122,11 @@ pub fn inference_path(wire: Wire) -> &'static str {
         Wire::Anthropic => "/messages",
         Wire::Responses => "/responses",
         Wire::Embeddings => "/embeddings",
+        // `OpenRouter` generates images through a chat-completions extension
+        // rather than an `/images` route, and has no video route at all, so
+        // `Client::serves` declines both media wires before this is consulted.
+        Wire::Images => "/images/generations",
+        Wire::Video => "/video/generations",
     }
 }
 

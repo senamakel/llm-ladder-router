@@ -27,6 +27,11 @@ pub fn inference_path(wire: Wire) -> &'static str {
     match wire {
         Wire::Anthropic | Wire::OpenAi | Wire::Responses => "/api/v1/chat/completions",
         Wire::Embeddings => "/api/v1/embeddings",
+        // Neither media surface is served — Venice's image API is its own
+        // shape under `/api/v1/image` — so `serves` declines both before this
+        // is consulted.
+        Wire::Images => "/api/v1/images/generations",
+        Wire::Video => "/api/v1/video/generations",
     }
 }
 
