@@ -1274,11 +1274,18 @@ async fn mock_surplus_media(
 
 async fn surplus_media_order_book(
     State(state): State<MockState>,
-    Path(_model): Path<String>,
+    Path(model): Path<String>,
 ) -> Json<serde_json::Value> {
     // Micro-USD per unit, with the per-token fields at zero, which is how the
-    // real order book quotes every image and video model.
+    // real order book quotes every image and video model. The direct prices
+    // are the live ones for `seedream-4.5` ($0.04 an image) and
+    // `kling-o3-pro-text-to-video` ($0.45 a job).
     let micro = state.price_per_1m * 1_000_000.0;
+    let (unit, direct) = if model.contains("video") {
+        ("job", 450_000.0)
+    } else {
+        ("image", 40_000.0)
+    };
     Json(serde_json::json!({
         "offers": [{
             "provider": "Venice AI",
@@ -1286,8 +1293,8 @@ async fn surplus_media_order_book(
             "price_output_per_1m": 0,
             "direct_output_per_1m": 0,
             "media_unit_price": micro,
-            "direct_media_unit_price": 40_000.0,
-            "media_unit": "image",
+            "direct_media_unit_price": direct,
+            "media_unit": unit,
             "available": true,
             "healthy": true,
         }]
@@ -1439,8 +1446,10 @@ fn media_config(surplus: &str, openrouter: &str) -> String {
 async fn an_images_request_reaches_the_images_endpoint_square_by_default() {
     let (surplus, recorded) =
         mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.004).await;
+    // Priced under the Surplus rung so it ranks first and is actually asked —
+    // and declines, because it does not serve the surface.
     let (openrouter, or_recorded) =
-        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.001).await;
     let router = start_router(&media_config(&surplus, &openrouter)).await;
 
     let response = reqwest::Client::new()
