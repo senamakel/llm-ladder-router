@@ -76,6 +76,25 @@ fn the_serving_sub_provider_is_read_from_the_response_body() {
     );
 }
 
+/// A Surplus media job names its seller as `served_by`, and as `unknown` until
+/// one has picked the job up — which is nobody, not a seller called "unknown".
+#[test]
+fn a_media_jobs_seller_is_read_from_served_by() {
+    assert_eq!(
+        served_by(br#"{"object":"media.job","served_by":"api.venice.ai"}"#),
+        Some("api.venice.ai".to_string())
+    );
+    assert_eq!(
+        served_by(br#"{"object":"media.job","served_by":"unknown"}"#),
+        None
+    );
+    // `provider` still wins where both are present.
+    assert_eq!(
+        served_by(br#"{"provider":"DeepInfra","served_by":"x"}"#),
+        Some("DeepInfra".to_string())
+    );
+}
+
 #[test]
 fn a_body_without_a_provider_field_names_nobody() {
     // Anthropic responses carry no top-level `provider`, and guessing is worse
@@ -212,6 +231,7 @@ async fn upstream() -> String {
                 axum::Json(serde_json::json!({ "sent": body.0 }))
             }),
         )
+        .merge(video_job_routes())
         .route(
             "/messages",
             post(|headers: axum::http::HeaderMap| async move {
@@ -248,6 +268,26 @@ async fn upstream() -> String {
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://{address}")
+}
+
+/// Surplus's video job, polled and cancelled at one path. Each answer names
+/// the job it was asked about and what the method did to it, so a test can see
+/// which was relayed.
+fn video_job_routes() -> axum::Router {
+    use axum::extract::Path;
+    use axum::routing::get;
+
+    axum::Router::new().route(
+        "/v1/video/generations/{id}",
+        get(|Path(id): Path<String>| async move {
+            axum::Json(serde_json::json!({
+                "id": id, "status": "completed", "served_by": "api.venice.ai",
+            }))
+        })
+        .delete(|Path(id): Path<String>| async move {
+            axum::Json(serde_json::json!({ "id": id, "status": "canceled" }))
+        }),
+    )
 }
 
 fn openrouter_client(base_url: &str) -> Client {
@@ -457,6 +497,23 @@ fn the_embeddings_surface_is_left_alone() {
     assert!(body.get("reasoning").is_none());
 }
 
+/// An image or video model does not think, and the field would be a 400 from
+/// a request that was otherwise fine.
+#[test]
+fn the_media_surfaces_are_left_alone() {
+    let mut chosen = chosen();
+    chosen.reasoning_effort = Some("high".to_string());
+    for wire in [Wire::Images, Wire::Video] {
+        let mut body = serde_json::json!({ "prompt": "a cat" });
+        apply_reasoning_effort(&mut body, &chosen, wire);
+        assert_eq!(body, serde_json::json!({ "prompt": "a cat" }), "{wire:?}");
+    }
+    assert!(Wire::Images.is_media());
+    assert!(Wire::Video.is_media());
+    assert!(!Wire::OpenAi.is_media());
+    assert!(!Wire::Embeddings.is_media());
+}
+
 /// A ladder that declares nothing changes nothing.
 #[test]
 fn no_declared_effort_inserts_nothing() {
@@ -521,6 +578,33 @@ fn each_surface_maps_to_its_own_native_path() {
     assert_eq!(
         surplus::inference_path(&capped, Wire::Responses),
         "/min40/v1/responses"
+    );
+
+    // The media arms on the providers that decline both surfaces are never
+    // consulted; they are spelled the `OpenAI` way for want of a better one.
+    assert_eq!(
+        openrouter::inference_path(Wire::Images),
+        "/images/generations"
+    );
+    assert_eq!(
+        openrouter::inference_path(Wire::Video),
+        "/video/generations"
+    );
+    assert_eq!(
+        mistral::inference_path(Wire::Images),
+        "/v1/images/generations"
+    );
+    assert_eq!(
+        mistral::inference_path(Wire::Video),
+        "/v1/video/generations"
+    );
+    assert_eq!(
+        venice::inference_path(Wire::Images),
+        "/api/v1/images/generations"
+    );
+    assert_eq!(
+        venice::inference_path(Wire::Video),
+        "/api/v1/video/generations"
     );
 }
 
@@ -739,6 +823,111 @@ async fn surplus_declines_only_a_streaming_responses_request() {
             body.get("stream")
         );
     }
+}
+
+/// The media surfaces are Surplus's alone. `OpenRouter` generates images
+/// through a chat-completions extension rather than `/v1/images` and has no
+/// video route, so a rung there declines before the round trip and the ladder
+/// advances — the same shape as a Mistral rung declining a Messages request.
+#[tokio::test]
+async fn only_surplus_serves_the_media_surfaces() {
+    let base = upstream().await;
+    let openrouter = openrouter_client(&base);
+    let mistral = mistral_client(&base);
+    let venice = venice_client(&base);
+
+    for wire in [Wire::Images, Wire::Video] {
+        for (client, name) in [
+            (&openrouter, "openrouter"),
+            (&mistral, "mistral"),
+            (&venice, "venice"),
+        ] {
+            assert!(!client.serves(wire), "{name} {wire:?}");
+            match client
+                .infer(&chosen(), wire, &serde_json::json!({ "prompt": "x" }))
+                .await
+            {
+                Err(Error::UnsupportedWire { provider, .. }) => assert_eq!(provider, name),
+                other => panic!("expected {name} to decline {wire:?}, got {other:?}"),
+            }
+        }
+    }
+
+    let surplus = Client::with_credential(
+        "surplus",
+        Provider {
+            kind: ProviderKind::Surplus,
+            base_url: base,
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    );
+    assert!(surplus.serves(Wire::Images));
+    assert!(surplus.serves(Wire::Video));
+}
+
+/// A job's poll and cancel are relayed with the router's credential to the
+/// un-prefixed job path, and only a provider that serves the video surface is
+/// asked.
+#[tokio::test]
+async fn a_video_job_is_polled_and_cancelled_through_relay() {
+    let base = upstream().await;
+    let surplus = Client::with_credential(
+        "surplus",
+        Provider {
+            kind: ProviderKind::Surplus,
+            base_url: base.clone(),
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    );
+    let path = surplus::video_job_path("job-1");
+
+    let polled = surplus.relay(reqwest::Method::GET, &path).await.unwrap();
+    assert_eq!(polled.status, reqwest::StatusCode::OK);
+    assert_eq!(polled.served_by.as_deref(), Some("api.venice.ai"));
+    let body: serde_json::Value = serde_json::from_slice(&polled.body).unwrap();
+    assert_eq!(body["id"], "job-1");
+    assert_eq!(body["status"], "completed");
+
+    let cancelled = surplus.relay(reqwest::Method::DELETE, &path).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&cancelled.body).unwrap();
+    assert_eq!(body["status"], "canceled");
+
+    match openrouter_client(&base)
+        .relay(reqwest::Method::GET, &path)
+        .await
+    {
+        Err(Error::UnsupportedWire { provider, wire }) => {
+            assert_eq!(provider, "openrouter");
+            assert_eq!(wire, "Video Generations");
+        }
+        other => panic!("expected UnsupportedWire, got {other:?}"),
+    }
+
+    // A transport failure is reported as one rather than swallowed.
+    let closed = Client::with_credential(
+        "surplus",
+        Provider {
+            kind: ProviderKind::Surplus,
+            base_url: "http://127.0.0.1:1".to_string(),
+            api_key_env: "LADDER_TEST_UNSET_KEY".to_string(),
+            max_cost_per_1m: None,
+            headers: std::collections::BTreeMap::new(),
+        },
+        reqwest::Client::new(),
+        Some("test-key".to_string()),
+    );
+    assert!(matches!(
+        closed.relay(reqwest::Method::GET, &path).await,
+        Err(Error::Upstream { .. })
+    ));
 }
 
 fn surplus_rung() -> Chosen {

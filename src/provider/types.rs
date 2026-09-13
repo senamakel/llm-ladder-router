@@ -31,6 +31,16 @@ pub enum Wire {
     Responses,
     /// `OpenAI` embeddings.
     Embeddings,
+    /// `OpenAI` image generation, `POST /v1/images/generations`.
+    ///
+    /// Prompt in, image out: the body carries `prompt` and `size` rather than
+    /// `messages`, and the response carries image data rather than choices.
+    Images,
+    /// Video generation, `POST /v1/video/generations`.
+    ///
+    /// Asynchronous: the response is a job to be polled, not a clip. Only
+    /// Surplus publishes this surface, and the router relays its shape.
+    Video,
 }
 
 impl Wire {
@@ -42,7 +52,19 @@ impl Wire {
             Self::Anthropic => "Anthropic Messages",
             Self::Responses => "OpenAI Responses",
             Self::Embeddings => "OpenAI Embeddings",
+            Self::Images => "OpenAI Images",
+            Self::Video => "Video Generations",
         }
+    }
+
+    /// Whether this wire is a media-generation surface rather than a text one.
+    ///
+    /// The media surfaces take no reasoning depth, pin no session, and are
+    /// capped per unit rather than per token; each of those rules asks this
+    /// once rather than listing the wires itself.
+    #[must_use]
+    pub fn is_media(self) -> bool {
+        matches!(self, Self::Images | Self::Video)
     }
 }
 
@@ -103,8 +125,9 @@ pub enum Disposition {
 /// - **Only on the two `OpenAI` chat surfaces.** Anthropic spells this as a
 ///   `thinking` block with a token budget, and inventing one from an effort
 ///   word would be the router translating between dialects rather than
-///   relaying. An embedding model does not reason at all, so the field would be
-///   a 400 from a request that was otherwise fine.
+///   relaying. An embedding model does not reason at all, and neither does an
+///   image or video one, so the field would be a 400 from a request that was
+///   otherwise fine.
 /// - **Nothing is inserted when no effort was declared**, so every ladder that
 ///   predates this field behaves exactly as it did.
 ///
@@ -116,7 +139,7 @@ pub enum Disposition {
 /// upstream is entitled to reject — and the depth the ladder paid for would
 /// silently not be bought.
 pub fn apply_reasoning_effort(body: &mut serde_json::Value, chosen: &Chosen, wire: Wire) {
-    if matches!(wire, Wire::Anthropic | Wire::Embeddings) {
+    if matches!(wire, Wire::Anthropic | Wire::Embeddings) || wire.is_media() {
         return;
     }
     let Some(effort) = chosen.reasoning_effort.as_ref() else {

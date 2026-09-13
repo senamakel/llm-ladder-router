@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::config::{CostBasis, PriceUnit};
 use crate::ladder::SkipReason;
 
 /// A provider deliberately pointed at a closed loopback port.
@@ -40,6 +41,20 @@ fn state_with(server: &str) -> State {
     let credentials = BTreeMap::from([("openrouter".to_string(), "test-key".to_string())]);
     let (_, state) = build_with_credentials(config, &credentials).unwrap();
     state
+}
+
+/// A ladder with only a name and a surface, for stamping headers with.
+fn ladder(name: &str, surface: Surface) -> crate::config::Ladder {
+    crate::config::Ladder {
+        name: name.to_string(),
+        aliases: Vec::new(),
+        surface,
+        cost_basis: CostBasis::default(),
+        reasoning_effort: None,
+        request_defaults: BTreeMap::new(),
+        rungs: Vec::new(),
+        fallback: None,
+    }
 }
 
 fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
@@ -108,6 +123,7 @@ fn an_exhausted_ladder_explains_every_rung_it_passed_over() {
             reason: SkipReason::NoSellerUnderCap {
                 cap_per_1m: 0.30,
                 cheapest_per_1m: Some(0.63),
+                unit: PriceUnit::MillionTokens,
             },
         },
         Skipped {
@@ -142,7 +158,7 @@ fn a_routing_decision_is_stamped_onto_the_response() {
 
     let response = with_routing_headers(
         Response::new(axum::body::Body::empty()),
-        "reasoning",
+        &ladder("reasoning", Surface::Chat),
         &chosen,
         2,
         Some("thread-1"),
@@ -176,13 +192,46 @@ fn an_uncapped_rung_carries_no_ceiling_header() {
 
     let response = with_routing_headers(
         Response::new(axum::body::Body::empty()),
-        "flash",
+        &ladder("flash", Surface::Chat),
         &chosen,
         0,
         None,
         false,
     );
     assert!(response.headers().get(HEADER_CAP).is_none());
+    assert!(response.headers().get(HEADER_CAP_PER_UNIT).is_none());
+}
+
+/// A media ceiling is per image or per job, and a header named `per-1m`
+/// would have a reader multiply it by a million tokens that were never
+/// counted. So the media surfaces send the per-unit header and not the other.
+#[test]
+fn a_media_ceiling_is_stamped_per_unit() {
+    let chosen = Chosen {
+        rung: 0,
+        provider: "surplus".to_string(),
+        model: "seedream-4.5".to_string(),
+        cap_per_1m: Some(0.02),
+        admitted: vec!["OpenRouter".to_string()],
+        cheapest_per_1m: Some(0.0004),
+        min_discount_pct: Some(50),
+        prefer: Vec::new(),
+        reasoning_effort: None,
+        score_multiplier: 1.0,
+        score: Some(0.0004),
+    };
+
+    let response = with_routing_headers(
+        Response::new(axum::body::Body::empty()),
+        &ladder("image", Surface::Images),
+        &chosen,
+        0,
+        None,
+        false,
+    );
+    let headers = response.headers();
+    assert_eq!(headers[HEADER_CAP_PER_UNIT], "0.02");
+    assert!(headers.get(HEADER_CAP).is_none());
 }
 
 #[tokio::test]
@@ -217,8 +266,36 @@ fn a_surface_answers_only_its_own_wire_formats() {
     // There is no Anthropic embeddings format to serve.
     assert!(!serves(Surface::Embeddings, Wire::Anthropic));
 
+    // Each media surface answers exactly one wire, and nothing else answers
+    // it: an image model cannot take a chat body and a chat model cannot
+    // return a picture.
+    assert!(serves(Surface::Images, Wire::Images));
+    assert!(!serves(Surface::Images, Wire::Video));
+    assert!(!serves(Surface::Images, Wire::OpenAi));
+    assert!(serves(Surface::Video, Wire::Video));
+    assert!(!serves(Surface::Video, Wire::Images));
+    assert!(!serves(Surface::Chat, Wire::Images));
+    assert!(!serves(Surface::Chat, Wire::Video));
+    assert!(!serves(Surface::Embeddings, Wire::Images));
+
     assert_eq!(surface_name(Surface::Chat), "chat");
     assert_eq!(surface_name(Surface::Embeddings), "embeddings");
+    assert_eq!(surface_name(Surface::Images), "images");
+    assert_eq!(surface_name(Surface::Video), "video");
+}
+
+/// A job id becomes a segment of an upstream path, so it must not be able to
+/// become more than one segment — or a query, or a parent reference.
+#[test]
+fn a_job_id_is_one_path_segment() {
+    assert!(is_job_id("01M2E752E5S0GQ5AYRJWB8WGD1"));
+    assert!(is_job_id("job-1_a"));
+    assert!(!is_job_id(""));
+    assert!(!is_job_id("a/b"));
+    assert!(!is_job_id("a?x=1"));
+    assert!(!is_job_id(".."));
+    assert!(!is_job_id("a b"));
+    assert!(!is_job_id(&"x".repeat(129)));
 }
 
 /// A loopback Surplus good enough for `serve` to start against.

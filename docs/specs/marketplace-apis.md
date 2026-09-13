@@ -1,7 +1,7 @@
 # Marketplace APIs
 
-Everything here was verified against the live APIs on 2026-08-18, and the
-embeddings sections on 2026-08-24. Where a
+Everything here was verified against the live APIs on 2026-08-18, the
+embeddings sections on 2026-08-24, and the media sections on 2026-09-14. Where a
 documented feature does not behave as documented, the observed behavior wins and
 the discrepancy is recorded — the router is built against what the servers do.
 
@@ -73,6 +73,11 @@ slugs (`glm-5.2`). OpenAI-compatible.
   root the Messages surface uses. `POST /responses` (no `/v1`) is a 404.
   Verified live 2026-08-23.
 - `POST /v1/embeddings`, with **no discounted form** — see below.
+- `POST /v1/images/generations`, `OpenAI`-shaped (`model`, `prompt`, `size`,
+  `n`, `quality`, `response_format`), and `POST /min{N}/v1/images/generations`
+  for minimum-discount routing. Answers `data[].b64_json`.
+- `POST /v1/video/generations` and `POST /min{N}/v1/video/generations`,
+  asynchronous — see below.
 
 Response headers worth capturing: `x-si-served-by`, `x-si-marketplace-status`
 (`served` / `filtered`), `x-si-marketplace-attempts`, `x-si-provider-family`,
@@ -143,6 +148,67 @@ Five of the 175 offers publish no `media_unit_price` of their own while still
 carrying the `direct_media_unit_price`. One usable seller at zero is enough to
 drag the whole rung's floor to zero, so those are read at the direct price:
 "published no discount" is the honest reading, and it errs upward.
+
+### Image and video models are priced per unit, in the same field
+
+Every image model's offers report `price_input_per_1m` and
+`price_output_per_1m` as `0` and the real figure in `media_unit_price` with
+`media_unit: "image"` (or `"megapixel"` — `flux.2-flex`, `venice-flux-2-max`,
+`venice-flux-2-pro` and `venice-grok-imagine-quality`), against a
+`direct_media_unit_price` in the same unit. Video models do the same with
+`media_unit: "job"`. Units are micro-USD: `seedream-4.5` reports a direct
+`40000` (= $0.04 an image) and `kling-o3-pro-text-to-video` a direct `450000`
+(= $0.45 a job).
+
+The router therefore reads `media_unit_price` whenever a unit is published,
+not only for `1M tokens`. A ladder's rungs share a surface and so a unit, so the
+comparison is between like and like; the ceiling on a media rung is
+`max_cost_per_unit`, in USD per image or per job, and the `/min{N}/` discount is
+computed against `direct_media_unit_price` exactly as it is against
+`direct_output_per_1m` for chat.
+
+Both media routes take the discount prefix. Unauthenticated,
+`/min50/v1/images/generations` answers 402 and `/min50/v1/video/generations`
+answers 401 — the "route exists, pay first" answers — where a missing route
+answers 404. Authenticated, an images request through `/min37/` served and a
+video request through `/min19/` queued.
+
+A `size` of `1024x1024` is accepted by the image models; `venice-recraft-v4-pro`
+rendered it at 2048×2048, still square.
+
+### Video is an asynchronous job
+
+`POST /v1/video/generations` requires an API key — unauthenticated it answers
+401 `Async media generation requires an API key or session` rather than the
+402 the other routes give — and answers **202** with a `media.job`:
+
+```json
+{"id":"01M2E84XF3MDKVVJEGZYS68SW1","object":"media.job","kind":"video",
+ "status":"queued","created":1789332191,"expires_at":1789333991,
+ "estimated_cost_usdc":"99998","max_cost_usdc":"…",
+ "poll_url":"https://api.surplusintelligence.ai/v1/video/generations/01M2E84XF3MDKVVJEGZYS68SW1",
+ "cancel_url":"https://api.surplusintelligence.ai/v1/video/generations/01M2E84XF3MDKVVJEGZYS68SW1",
+ "job_token":"mjt_…","served_by":"unknown","provider_family":"unknown",
+ "marketplace_status":"unknown","marketplace_attempts":0}
+```
+
+`GET /v1/video/generations/{id}` returns the same object with `status` moving
+through `queued` and `submitted` to completion; `served_by` names the seller
+once one has picked the job up, and reads `unknown` before that. `DELETE` on
+the same path moves it to `canceled`. An unknown id is 404 `not_found`. The
+poll and cancel paths are un-prefixed; the discount was applied at submission.
+
+Square is `aspect_ratio: "1:1"`; every text-to-video model checked lists
+`16:9`, `9:16` and `1:1`, and an unsupported value is a 400 naming the
+supported ones.
+
+**A `quote: true` field does not quote.** The catalogue lists `quote` among a
+video model's `supported_parameters`, but a request carrying it was queued as a
+real job (and billed for one marketplace attempt before it was cancelled).
+Nothing here sends it.
+
+A model with no live seller answers 503 `no_healthy_sellers`, which is a 5xx
+and advances the ladder by the ordinary rule.
 
 ### The served provider is not necessarily an order-book seller
 

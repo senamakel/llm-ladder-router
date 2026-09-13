@@ -75,11 +75,13 @@ impl Client {
 
     /// Whether this provider serves a wire format at all.
     ///
-    /// Both marketplaces publish every surface; Mistral publishes neither the
-    /// Anthropic Messages one nor the `OpenAI` Responses one, and Venice
-    /// publishes only chat completions. A rung on a provider that does not
-    /// serve the caller's surface declines before the round trip — see
-    /// [`Client::infer`].
+    /// Both marketplaces publish every text surface; Mistral publishes neither
+    /// the Anthropic Messages one nor the `OpenAI` Responses one, and Venice
+    /// publishes only chat completions. The two media surfaces are Surplus's
+    /// alone: `OpenRouter` generates images through a chat-completions
+    /// extension rather than `/v1/images`, and publishes no video route. A rung
+    /// on a provider that does not serve the caller's surface declines before
+    /// the round trip — see [`Client::infer`].
     ///
     /// The question is asked of the wire format alone, so a refusal that also
     /// depends on the body — Surplus declining a *streamed* responses request,
@@ -92,7 +94,8 @@ impl Client {
     #[must_use]
     pub fn serves(&self, wire: Wire) -> bool {
         match self.provider.kind {
-            ProviderKind::OpenRouter | ProviderKind::Surplus => true,
+            ProviderKind::Surplus => true,
+            ProviderKind::OpenRouter => !wire.is_media(),
             ProviderKind::Mistral => mistral::serves(wire),
             ProviderKind::Venice => venice::serves(wire),
         }
@@ -244,6 +247,11 @@ impl Client {
                 source,
             })?;
 
+        self.dispatched(response).await
+    }
+
+    /// Reads a completed upstream response into a [`Dispatched`].
+    async fn dispatched(&self, response: reqwest::Response) -> Result<Dispatched> {
         let status = response.status();
         let content_type = response
             .headers()
@@ -282,6 +290,37 @@ impl Client {
         }
     }
 
+    /// Relays a bodiless request — a video job's poll or cancel — and reports
+    /// what came back.
+    ///
+    /// No ladder is walked and no body is rewritten: the job already exists at
+    /// exactly one provider, and this is the router asking that provider about
+    /// it on the caller's behalf, with the router's credential. The path is a
+    /// provider-relative one such as [`surplus::video_job_path`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnsupportedWire`] if this provider does not serve the
+    /// video surface, and [`Error::Upstream`] if the request could not be
+    /// completed.
+    pub async fn relay(&self, method: reqwest::Method, path: &str) -> Result<Dispatched> {
+        if !self.serves(Wire::Video) {
+            return Err(Error::UnsupportedWire {
+                provider: self.name.clone(),
+                wire: Wire::Video.api_name().to_string(),
+            });
+        }
+        let response =
+            self.request(method, path)
+                .send()
+                .await
+                .map_err(|source| Error::Upstream {
+                    provider: self.name.clone(),
+                    source,
+                })?;
+        self.dispatched(response).await
+    }
+
     async fn get(&self, path: &str) -> Result<Vec<u8>> {
         let response = self
             .request(reqwest::Method::GET, path)
@@ -314,11 +353,15 @@ impl Client {
 /// The sub-provider that served, as reported in an `OpenAI`-shaped response body.
 ///
 /// Both marketplaces put the terminal upstream in a top-level `provider` field.
+/// A Surplus media job spells it `served_by` instead, and reads `unknown`
+/// until a seller has picked the job up — which is no sub-provider at all, so
+/// it is not reported as one.
 fn served_by(body: &[u8]) -> Option<String> {
-    serde_json::from_slice::<serde_json::Value>(body)
-        .ok()?
-        .get("provider")?
+    let body = serde_json::from_slice::<serde_json::Value>(body).ok()?;
+    body.get("provider")
+        .or_else(|| body.get("served_by"))?
         .as_str()
+        .filter(|name| *name != "unknown")
         .map(str::to_string)
 }
 

@@ -6,6 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::config::PriceUnit;
 use crate::cooldown::Cooldowns;
 use crate::pricing::{ModelPrices, Offer};
 
@@ -296,6 +297,7 @@ fn a_rung_over_its_ceiling_is_skipped_with_both_figures() {
         SkipReason::NoSellerUnderCap {
             cap_per_1m,
             cheapest_per_1m,
+            ..
         } => {
             assert!((cap_per_1m - 0.30).abs() < f64::EPSILON);
             assert_eq!(*cheapest_per_1m, Some(0.63));
@@ -610,6 +612,7 @@ fn a_priced_out_rung_names_the_ceiling_and_the_cheapest_seller() {
     let reason = SkipReason::NoSellerUnderCap {
         cap_per_1m: 0.3,
         cheapest_per_1m: Some(0.63),
+        unit: PriceUnit::MillionTokens,
     };
     // Knowing the floor was 0.63 against a 0.30 ceiling is what makes the
     // decision reviewable.
@@ -624,6 +627,7 @@ fn a_rung_with_no_usable_seller_at_all_says_so() {
     let reason = SkipReason::NoSellerUnderCap {
         cap_per_1m: 0.3,
         cheapest_per_1m: None,
+        unit: PriceUnit::MillionTokens,
     };
     assert_eq!(reason.to_string(), "no usable seller under $0.3/Mtok");
 }
@@ -698,6 +702,7 @@ fn an_uncapped_rung_whose_sellers_are_all_down_is_skipped() {
         SkipReason::NoSellerUnderCap {
             cap_per_1m,
             cheapest_per_1m,
+            ..
         } => {
             assert!(cap_per_1m.is_infinite());
             assert_eq!(*cheapest_per_1m, None);

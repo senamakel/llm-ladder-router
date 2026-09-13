@@ -142,6 +142,8 @@ the last one that worked.
 | `POST /v1/responses` | OpenAI responses |
 | `POST /v1/messages` | Anthropic Messages |
 | `POST /v1/embeddings` | OpenAI embeddings |
+| `POST /v1/images/generations` | OpenAI images (Surplus only) |
+| `POST /v1/video/generations` | video jobs (Surplus only); `GET`/`DELETE` `/{id}` polls and cancels |
 | `GET /v1/models` | the configured ladders, listed as models |
 | `GET /healthz` | liveness |
 
@@ -186,9 +188,10 @@ accepts every caller, which is only appropriate on a loopback bind.
 
 Every response says how it was routed: `x-ladder-name`, `x-ladder-rung`,
 `x-ladder-provider`, `x-ladder-model`, `x-ladder-sub-provider`,
-`x-ladder-cap-per-1m`, `x-ladder-score`, `x-ladder-skipped`, and
-`x-ladder-reasoning-effort` when the ladder asked for a reasoning depth. When no rung can serve, the 502 body
-lists each rung and why it was passed over.
+`x-ladder-cap-per-1m` (or `x-ladder-cap-per-unit` on a media surface),
+`x-ladder-score`, `x-ladder-skipped`, and `x-ladder-reasoning-effort` when the
+ladder asked for a reasoning depth. When no rung can serve, the 502 body lists
+each rung and why it was passed over.
 
 ## Embeddings
 
@@ -229,6 +232,30 @@ Two things differ, and both are facts about the marketplaces rather than choices
 Of the two marketplaces only Surplus carries embedding models today —
 `venice-embed-1` at the time of writing. `OpenRouter` answers on `/embeddings`
 but lists none, so a rung pointed there has nothing to serve it.
+
+## Images and video
+
+Surplus resells image and video generation through the same order books, so a
+ladder declared with `surface = "images"` or `surface = "video"` gets the same
+ranking, ceilings, failover and cooldowns as a chat one. Three things differ,
+all of them facts about how media is sold:
+
+- **Ceilings are per unit.** An image model is quoted per image and a video
+  model per job, so a media rung takes `max_cost_per_unit` (USD per image or
+  per clip) instead of `max_cost_per_1m`; each is refused on the other's
+  surface, and the provider's per-Mtok ceiling is not inherited. The ceiling
+  still binds through Surplus's `/min{N}/` prefix.
+- **Video is a job.** `POST /v1/video/generations` answers at once with a
+  `media.job`; poll `GET /v1/video/generations/{id}` until it finishes, or
+  `DELETE` it to cancel. Both are relayed to the provider that took the job.
+- **Square by default.** A ladder's `request_defaults` table fills in fields
+  the caller left out — `size = "1024x1024"` for images, `aspect_ratio = "1:1"`
+  for video — and never overrides one they sent.
+
+Only Surplus carries either surface; a rung elsewhere declines before the round
+trip. The example configuration's `vision` ladder is an ordinary chat ladder
+whose rungs all read image and video input, for looking at the result. See
+[`docs/specs/media-generation.md`](docs/specs/media-generation.md).
 
 ## Scoring
 

@@ -8,6 +8,14 @@ use crate::config::CostBasis;
 /// A slice of the live `venice-embed-1` order book, captured 2026-08-24.
 const EMBEDDINGS_ORDER_BOOK: &str =
     include_str!("../../../tests/fixtures/surplus-embeddings-order-book.json");
+/// `GET /api/markets/seedream-4.5`, captured 2026-09-14 and trimmed to nine
+/// offers: six live, three not. Every offer is quoted per `image`.
+const IMAGES_ORDER_BOOK: &str =
+    include_str!("../../../tests/fixtures/surplus-images-order-book.json");
+/// `GET /api/markets/kling-o3-pro-text-to-video`, captured 2026-09-14 and
+/// trimmed the same way. Every offer is quoted per `job`.
+const VIDEO_ORDER_BOOK: &str =
+    include_str!("../../../tests/fixtures/surplus-video-order-book.json");
 
 fn chosen(min_discount_pct: Option<u8>) -> Chosen {
     Chosen {
@@ -397,18 +405,59 @@ fn a_media_unit_price_stands_in_for_absent_token_prices() {
     assert!((floor - 0.001).abs() < 1e-9, "{floor}");
 }
 
-/// The unit is checked rather than assumed: the same field prices an image
-/// model per image, and a per-image price compared against a per-token ceiling
-/// would admit or refuse a seller for reasons that are not about money.
+/// An image model is quoted per image and a video model per job, in the same
+/// `media_unit_price` field an embedding model uses for tokens. Each is read
+/// in its own unit: a rung on a media ladder is compared only against rungs
+/// on the same surface, so a per-image price is a price.
 #[test]
-fn a_media_unit_that_is_not_tokens_is_not_read_as_a_token_price() {
+fn a_per_image_order_book_is_priced_per_image() {
+    let prices = parse_order_book(IMAGES_ORDER_BOOK.as_bytes()).unwrap();
+
+    // 400 micro-USD per image is $0.0004, against a $0.04 direct price.
+    let cheapest = &prices.offers[0];
+    assert!(
+        (cheapest.completion_per_1m - 0.0004).abs() < 1e-12,
+        "{cheapest:?}"
+    );
+    assert!((cheapest.direct_completion_per_1m.unwrap() - 0.04).abs() < 1e-12);
+
+    // A ceiling of two cents an image admits the discounted sellers and
+    // refuses none of the live ones in this slice, which all sit under it —
+    // and one of a tenth of a cent admits only the deepest discount.
+    assert_eq!(prices.admitted(Some(0.02), CostBasis::Completion).len(), 6);
+    assert_eq!(prices.admitted(Some(0.001), CostBasis::Completion).len(), 1);
+    // Two cents against a four-cent direct price is a 50% discount.
+    assert_eq!(prices.discount_floor_pct(0.02), Some(50));
+}
+
+#[test]
+fn a_per_job_order_book_is_priced_per_job() {
+    let prices = parse_order_book(VIDEO_ORDER_BOOK.as_bytes()).unwrap();
+
+    // 180000 micro-USD per job is $0.18, against a $0.45 direct price.
+    let cheapest = &prices.offers[0];
+    assert!(
+        (cheapest.completion_per_1m - 0.18).abs() < 1e-12,
+        "{cheapest:?}"
+    );
+    assert!((cheapest.direct_completion_per_1m.unwrap() - 0.45).abs() < 1e-12);
+    // Twenty cents a job admits the one seller at eighteen and the one at
+    // nineteen-point-eight, and is a 55% discount off the direct rate.
+    assert_eq!(prices.admitted(Some(0.20), CostBasis::Completion).len(), 2);
+    assert_eq!(prices.discount_floor_pct(0.20), Some(55));
+}
+
+/// An offer that publishes no unit at all and no token price is genuinely
+/// free, and stays so: the media price is read only when the marketplace said
+/// what it is per.
+#[test]
+fn a_media_price_with_no_unit_is_not_read() {
     let body = serde_json::json!({
         "offers": [{
-            "provider": "Venice AI",
+            "provider": "Somewhere",
             "price_input_per_1m": 0.0,
             "price_output_per_1m": 0.0,
             "media_unit_price": 40_000.0,
-            "media_unit": "1 image",
             "available": true,
             "healthy": true,
         }]
@@ -417,8 +466,6 @@ fn a_media_unit_that_is_not_tokens_is_not_read_as_a_token_price() {
 
     let offer = &parse_order_book(body.as_bytes()).unwrap().offers[0];
     assert!(offer.completion_per_1m.abs() < f64::EPSILON, "{offer:?}");
-    // Nothing was published in a comparable unit, so there is no direct price
-    // to restate a ceiling against either.
     assert_eq!(offer.direct_completion_per_1m, None);
 }
 
@@ -440,6 +487,33 @@ fn a_seller_quoting_no_price_of_its_own_is_read_as_undiscounted() {
         "{unquoted:?}"
     );
     assert!((unquoted.direct_completion_per_1m.unwrap() - 0.02).abs() < 1e-9);
+}
+
+/// Both media routes take the discount prefix in the leading position, the
+/// same place chat completions does; a job is polled and cancelled at its
+/// un-prefixed path.
+#[test]
+fn the_media_paths_carry_the_discount_prefix() {
+    assert_eq!(
+        inference_path(&chosen(Some(50)), Wire::Images),
+        "/min50/v1/images/generations"
+    );
+    assert_eq!(
+        inference_path(&chosen(None), Wire::Images),
+        "/v1/images/generations"
+    );
+    assert_eq!(
+        inference_path(&chosen(Some(55)), Wire::Video),
+        "/min55/v1/video/generations"
+    );
+    assert_eq!(
+        inference_path(&chosen(None), Wire::Video),
+        "/v1/video/generations"
+    );
+    assert_eq!(
+        video_job_path("01M2E752E5S0GQ5AYRJWB8WGD1"),
+        "/v1/video/generations/01M2E752E5S0GQ5AYRJWB8WGD1"
+    );
 }
 
 /// Every prefixed spelling of the embeddings path 404s on the live API, so a

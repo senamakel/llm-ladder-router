@@ -23,7 +23,14 @@ pub const HEADER_MODEL: &str = "x-ladder-model";
 /// Response header naming the sub-provider the marketplace routed to.
 pub const HEADER_SUB_PROVIDER: &str = "x-ladder-sub-provider";
 /// Response header carrying the ceiling that applied, in USD per Mtok.
+///
+/// Sent on the token surfaces; a media surface sends [`HEADER_CAP_PER_UNIT`]
+/// instead, because the number is in a different unit and a header named for
+/// the wrong one would be read wrong.
 pub const HEADER_CAP: &str = "x-ladder-cap-per-1m";
+/// Response header carrying the ceiling that applied on a media surface, in
+/// USD per image or per video job.
+pub const HEADER_CAP_PER_UNIT: &str = "x-ladder-cap-per-unit";
 /// Response header naming the reasoning depth the router asked for, when it
 /// asked for one. Absent means the request was relayed with whatever depth the
 /// caller sent, which is not the same as the model having thought shallowly.

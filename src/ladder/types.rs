@@ -26,11 +26,14 @@ pub enum SkipReason {
     StalePriceData,
     /// Every seller was above the ceiling.
     NoSellerUnderCap {
-        /// The ceiling that applied, in USD per million tokens.
+        /// The ceiling that applied, in USD per `unit`.
         cap_per_1m: f64,
-        /// The cheapest usable seller, in USD per million tokens, when there
-        /// was one at all.
+        /// The cheapest usable seller, in USD per `unit`, when there was one
+        /// at all.
         cheapest_per_1m: Option<f64>,
+        /// What the two figures are per: a million tokens on a text surface,
+        /// an image or a job on a media one.
+        unit: crate::config::PriceUnit,
     },
     /// The rung answered 429 recently and is still cooling down.
     RateLimited {
@@ -63,12 +66,13 @@ impl std::fmt::Display for SkipReason {
             Self::NoSellerUnderCap {
                 cap_per_1m,
                 cheapest_per_1m,
+                unit,
             } => match cheapest_per_1m {
                 Some(cheapest) => write!(
                     formatter,
-                    "no seller under ${cap_per_1m}/Mtok; cheapest is ${cheapest}/Mtok"
+                    "no seller under ${cap_per_1m}/{unit}; cheapest is ${cheapest}/{unit}"
                 ),
-                None => write!(formatter, "no usable seller under ${cap_per_1m}/Mtok"),
+                None => write!(formatter, "no usable seller under ${cap_per_1m}/{unit}"),
             },
             Self::RateLimited { retry_in_secs } => {
                 write!(formatter, "rate limited, retry in {retry_in_secs}s")
@@ -100,12 +104,19 @@ pub struct Chosen {
     pub provider: String,
     /// The model slug to ask for.
     pub model: String,
-    /// The ceiling that applies, in USD per million tokens, once the provider's
-    /// ceiling has been folded into the rung's.
+    /// The ceiling that applies, once the provider's ceiling has been folded
+    /// into the rung's.
+    ///
+    /// In USD per million tokens on a text surface. On a media surface it is
+    /// the rung's [`max_cost_per_unit`][crate::config::Rung::max_cost_per_unit],
+    /// in USD per image or per job, and nothing is folded in; the field keeps
+    /// one name because every consumer — the pin, the discount, the headers —
+    /// treats it as "the ceiling" and the surface says what that is per.
     pub cap_per_1m: Option<f64>,
     /// The sub-providers that fit under the ceiling, cheapest first.
     pub admitted: Vec<String>,
-    /// The cheapest admitted price, in USD per million tokens.
+    /// The cheapest admitted price, in the same unit as
+    /// [`Chosen::cap_per_1m`].
     pub cheapest_per_1m: Option<f64>,
     /// The minimum discount that expresses the ceiling, for marketplaces that
     /// filter by discount rather than by absolute price.

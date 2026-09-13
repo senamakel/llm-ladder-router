@@ -118,6 +118,20 @@ pub enum Error {
         field: String,
     },
 
+    /// A rung's ceiling is written in the unit of the other kind of surface.
+    ///
+    /// Token surfaces are billed per million tokens and media surfaces per
+    /// image or per job. A ceiling in the wrong unit is not a limit at all, so
+    /// it is refused where it is still a typo rather than compared against
+    /// prices it does not describe.
+    #[error("{field} is in the wrong unit for this ladder's surface; use {expected}")]
+    WrongCeilingUnit {
+        /// The configuration field that carried the ceiling.
+        field: String,
+        /// The field that should have carried it.
+        expected: &'static str,
+    },
+
     /// A direct provider was asked for price or balance data it does not
     /// publish.
     #[error("{provider} is a direct endpoint and publishes no {what}")]

@@ -23,6 +23,11 @@ pub fn inference_path(wire: Wire) -> &'static str {
     match wire {
         Wire::Anthropic | Wire::OpenAi | Wire::Responses => "/v1/chat/completions",
         Wire::Embeddings => "/v1/embeddings",
+        // Neither media surface is served, so `serves` declines both before
+        // this is consulted; the spelling is the `OpenAI` one for want of a
+        // better answer.
+        Wire::Images => "/v1/images/generations",
+        Wire::Video => "/v1/video/generations",
     }
 }
 
@@ -38,7 +43,7 @@ pub fn inference_path(wire: Wire) -> &'static str {
 pub fn serves(wire: Wire) -> bool {
     match wire {
         Wire::OpenAi | Wire::Embeddings => true,
-        Wire::Anthropic | Wire::Responses => false,
+        Wire::Anthropic | Wire::Responses | Wire::Images | Wire::Video => false,
     }
 }
 

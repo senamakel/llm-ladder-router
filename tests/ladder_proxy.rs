@@ -1241,3 +1241,454 @@ async fn the_model_list_advertises_every_name_a_ladder_answers_to() {
     assert_eq!(flash["id"], "flash");
     assert_eq!(flash["aliases"][0], "chat-v1");
 }
+
+/// A mock Surplus for the media surfaces: an order book quoted per image or
+/// per job, the two generation routes with and without a discount prefix, and
+/// a video job that can be polled and cancelled.
+async fn mock_surplus_media(
+    behavior: Behavior,
+    price_per_unit: f64,
+) -> (String, Arc<Mutex<Recorded>>) {
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let state = MockState {
+        behavior,
+        price_per_1m: price_per_unit,
+        recorded: recorded.clone(),
+    };
+
+    let app = Router::new()
+        .route("/api/markets/{model}", get(surplus_media_order_book))
+        .route("/v1/buyer/me", get(surplus_balance))
+        .route("/v1/images/generations", post(surplus_images))
+        .route("/{prefix}/v1/images/generations", post(surplus_images))
+        .route("/v1/video/generations", post(surplus_video))
+        .route("/{prefix}/v1/video/generations", post(surplus_video))
+        .route(
+            "/v1/video/generations/{id}",
+            get(surplus_video_job).delete(surplus_video_job),
+        )
+        .with_state(state);
+
+    (serve(app).await, recorded)
+}
+
+async fn surplus_media_order_book(
+    State(state): State<MockState>,
+    Path(model): Path<String>,
+) -> Json<serde_json::Value> {
+    // Micro-USD per unit, with the per-token fields at zero, which is how the
+    // real order book quotes every image and video model. The direct prices
+    // are the live ones for `seedream-4.5` ($0.04 an image) and
+    // `kling-o3-pro-text-to-video` ($0.45 a job).
+    let micro = state.price_per_1m * 1_000_000.0;
+    let (unit, direct) = if model.contains("video") {
+        ("job", 450_000.0)
+    } else {
+        ("image", 40_000.0)
+    };
+    Json(serde_json::json!({
+        "offers": [{
+            "provider": "Venice AI",
+            "price_input_per_1m": 0,
+            "price_output_per_1m": 0,
+            "direct_output_per_1m": 0,
+            "media_unit_price": micro,
+            "direct_media_unit_price": direct,
+            "media_unit": unit,
+            "available": true,
+            "healthy": true,
+        }]
+    }))
+}
+
+async fn surplus_images(
+    State(state): State<MockState>,
+    uri: axum::http::Uri,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    {
+        let mut recorded = state.recorded.lock().unwrap();
+        recorded.bodies.push(body);
+        recorded.paths.push(uri.path().to_string());
+    }
+    match &state.behavior {
+        Behavior::Serve(provider) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "created": 1_789_331_147,
+                "provider": provider,
+                "data": [{ "b64_json": "aGk=" }],
+            })),
+        ),
+        behavior @ Behavior::Fail(..) => respond(behavior),
+    }
+}
+
+/// The `media.job` shape the live API answers a video submission with.
+fn video_job(status: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "01M2E752E5S0GQ5AYRJWB8WGD1",
+        "object": "media.job",
+        "kind": "video",
+        "status": status,
+        "poll_url": "https://api.surplusintelligence.ai/v1/video/generations/01M2E752E5S0GQ5AYRJWB8WGD1",
+        "served_by": "api.venice.ai",
+    })
+}
+
+async fn surplus_video(
+    State(state): State<MockState>,
+    uri: axum::http::Uri,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    {
+        let mut recorded = state.recorded.lock().unwrap();
+        recorded.bodies.push(body);
+        recorded.paths.push(uri.path().to_string());
+    }
+    match &state.behavior {
+        // The live API answers a queued job with 202, and the router relays
+        // the status as it relays everything else.
+        Behavior::Serve(_) => (StatusCode::ACCEPTED, Json(video_job("queued"))),
+        behavior @ Behavior::Fail(..) => respond(behavior),
+    }
+}
+
+/// Polls or cancels the one job this mock knows about; any other id is the
+/// live API's 404.
+async fn surplus_video_job(
+    State(state): State<MockState>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    state
+        .recorded
+        .lock()
+        .unwrap()
+        .paths
+        .push(format!("{method} {}", uri.path()));
+    if id != "01M2E752E5S0GQ5AYRJWB8WGD1" {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": { "code": "not_found" } })),
+        );
+    }
+    let status = if method == axum::http::Method::DELETE {
+        "canceled"
+    } else {
+        "completed"
+    };
+    (StatusCode::OK, Json(video_job(status)))
+}
+
+/// A media Surplus beside an `OpenRouter`, with an images ladder that names a
+/// rung on each, a video ladder, and a chat ladder to mismatch against. The
+/// `OpenRouter` rung goes first so a test can see it declined.
+fn media_config(surplus: &str, openrouter: &str) -> String {
+    format!(
+        r#"
+        [credits]
+        min_balance_usd = 0.5
+
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{surplus}"
+        api_key_env = "TEST_SURPLUS_KEY"
+        max_cost_per_1m = 1.00
+
+        [providers.openrouter]
+        kind = "openrouter"
+        base_url = "{openrouter}"
+        api_key_env = "TEST_OPENROUTER_KEY"
+
+        [[ladders]]
+        name = "image"
+        surface = "images"
+
+          [ladders.request_defaults]
+          size = "1024x1024"
+
+          [[ladders.rungs]]
+          provider = "openrouter"
+          model = "black-forest-labs/flux"
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "seedream-4.5"
+          max_cost_per_unit = 0.02
+
+        [[ladders]]
+        name = "video"
+        surface = "video"
+
+          [ladders.request_defaults]
+          aspect_ratio = "1:1"
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "kling-o3-pro-text-to-video"
+          max_cost_per_unit = 0.20
+
+        [[ladders]]
+        name = "prose"
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "deepseek-v4-flash"
+        "#
+    )
+}
+
+/// An images request walks the ladder like any other: the `OpenRouter` rung
+/// declines the surface and is stepped past, the Surplus rung's per-unit
+/// ceiling travels as a discount prefix, and the ladder's square default is
+/// filled in for a caller who did not say.
+#[tokio::test]
+async fn an_images_request_reaches_the_images_endpoint_square_by_default() {
+    let (surplus, recorded) =
+        mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.004).await;
+    // Priced under the Surplus rung so it ranks first and is actually asked —
+    // and declines, because it does not serve the surface.
+    let (openrouter, or_recorded) =
+        mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.001).await;
+    let router = start_router(&media_config(&surplus, &openrouter)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/images/generations"))
+        .json(&serde_json::json!({ "model": "image", "prompt": "a lighthouse at dusk" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let headers = response.headers();
+    assert_eq!(headers["x-ladder-model"], "seedream-4.5");
+    assert_eq!(headers["x-ladder-rung"], "1");
+    assert_eq!(headers["x-ladder-skipped"], "1");
+    // The ceiling is per image, and the header says so.
+    assert_eq!(headers["x-ladder-cap-per-unit"], "0.02");
+    assert!(headers.get("x-ladder-cap-per-1m").is_none());
+    assert_eq!(headers["x-ladder-sub-provider"], "Venice AI");
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"][0]["b64_json"], "aGk=");
+
+    let recorded = recorded.lock().unwrap();
+    // $0.02 against a $0.04 direct price is a 50% discount.
+    assert_eq!(
+        recorded.paths,
+        vec!["/min50/v1/images/generations".to_string()]
+    );
+    assert_eq!(recorded.bodies[0]["model"], "seedream-4.5");
+    assert_eq!(recorded.bodies[0]["prompt"], "a lighthouse at dusk");
+    assert_eq!(recorded.bodies[0]["size"], "1024x1024");
+    // `OpenRouter` was never asked: it does not serve the surface.
+    assert!(or_recorded.lock().unwrap().paths.is_empty());
+}
+
+/// A default is not an override.
+#[tokio::test]
+async fn a_callers_own_size_beats_the_ladder_default() {
+    let (surplus, recorded) =
+        mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.004).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&media_config(&surplus, &openrouter)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/images/generations"))
+        .json(&serde_json::json!({ "model": "image", "prompt": "wide", "size": "1792x1024" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(recorded.lock().unwrap().bodies[0]["size"], "1792x1024");
+}
+
+/// A per-unit ceiling binds like a per-token one: a seller above it is never
+/// called, and the ladder says so.
+#[tokio::test]
+async fn an_images_rung_priced_above_its_per_unit_ceiling_is_skipped() {
+    // Every seller at $0.05 an image, against a $0.02 ceiling.
+    let (surplus, recorded) =
+        mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.05).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&media_config(&surplus, &openrouter)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/images/generations"))
+        .json(&serde_json::json!({ "model": "image", "prompt": "x" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_GATEWAY);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let reasons: Vec<String> = body["error"]["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|skip| skip["reason"].as_str().unwrap().to_string())
+        .collect();
+    // The unit in the explanation is the unit the ceiling was written in.
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.contains("$0.02/unit") && reason.contains("$0.05/unit")),
+        "{reasons:?}"
+    );
+    assert!(recorded.lock().unwrap().paths.is_empty());
+}
+
+/// A video request is a job: the submission is routed through the ladder and
+/// answered with the job, and the job's poll and cancel are relayed to the
+/// provider that took it.
+#[tokio::test]
+async fn a_video_request_submits_a_job_that_can_be_polled_and_cancelled() {
+    let (surplus, recorded) =
+        mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.18).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&media_config(&surplus, &openrouter)).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "waves on a shore" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(
+        response.headers()["x-ladder-model"],
+        "kling-o3-pro-text-to-video"
+    );
+    assert_eq!(response.headers()["x-ladder-cap-per-unit"], "0.2");
+    // The job names the seller that took it, in Surplus's own field.
+    assert_eq!(response.headers()["x-ladder-sub-provider"], "api.venice.ai");
+    let job: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(job["object"], "media.job");
+    assert_eq!(job["status"], "queued");
+    let id = job["id"].as_str().unwrap().to_string();
+
+    let polled = client
+        .get(format!("{router}/v1/video/generations/{id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(polled.status(), reqwest::StatusCode::OK);
+    let polled: serde_json::Value = polled.json().await.unwrap();
+    assert_eq!(polled["status"], "completed");
+
+    let cancelled = client
+        .delete(format!("{router}/v1/video/generations/{id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status(), reqwest::StatusCode::OK);
+    let cancelled: serde_json::Value = cancelled.json().await.unwrap();
+    assert_eq!(cancelled["status"], "canceled");
+
+    let recorded = recorded.lock().unwrap();
+    // The ceiling travelled on the submission alone; the job is polled and
+    // cancelled at its un-prefixed path.
+    assert_eq!(
+        recorded.paths,
+        vec![
+            "/min55/v1/video/generations".to_string(),
+            format!("GET /v1/video/generations/{id}"),
+            format!("DELETE /v1/video/generations/{id}"),
+        ]
+    );
+    assert_eq!(recorded.bodies[0]["aspect_ratio"], "1:1");
+    assert_eq!(recorded.bodies[0]["prompt"], "waves on a shore");
+}
+
+/// A job nobody knows is a 404 from the router, once every provider serving
+/// the surface has been asked; a malformed id is refused before any is.
+#[tokio::test]
+async fn an_unknown_or_malformed_video_job_is_refused() {
+    let (surplus, recorded) =
+        mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.18).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&media_config(&surplus, &openrouter)).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(format!("{router}/v1/video/generations/nope"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(
+        body["error"]["message"].as_str().unwrap().contains("nope"),
+        "{body}"
+    );
+    assert_eq!(
+        recorded.lock().unwrap().paths,
+        vec!["GET /v1/video/generations/nope".to_string()]
+    );
+
+    let response = client
+        .get(format!("{router}/v1/video/generations/a%2F..%2Fb"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    // Refused at the door; the upstream was not asked.
+    assert_eq!(recorded.lock().unwrap().paths.len(), 1);
+}
+
+/// A media ladder answers only its own surface, and a chat ladder cannot draw
+/// a picture.
+#[tokio::test]
+async fn a_media_ladder_refuses_the_other_surfaces() {
+    let (surplus, recorded) =
+        mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.004).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&media_config(&surplus, &openrouter)).await;
+    let client = reqwest::Client::new();
+
+    for (path, ladder) in [
+        ("/v1/chat/completions", "image"),
+        ("/v1/video/generations", "image"),
+        ("/v1/images/generations", "video"),
+        ("/v1/images/generations", "prose"),
+    ] {
+        let response = client
+            .post(format!("{router}{path}"))
+            .json(&serde_json::json!({ "model": ladder, "prompt": "x", "messages": [] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "{path} {ladder}"
+        );
+    }
+    assert!(recorded.lock().unwrap().paths.is_empty());
+}
+
+/// Media requests carry no conversation, so nothing is pinned: the `user`
+/// field an `OpenAI`-shaped body may carry would otherwise tie a caller's next
+/// image to whichever seller drew the last one.
+#[tokio::test]
+async fn a_media_request_is_never_session_pinned() {
+    let (surplus, _) = mock_surplus_media(Behavior::Serve("Venice AI".to_string()), 0.004).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&media_config(&surplus, &openrouter)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/images/generations"))
+        .header("x-ladder-session", "thread-1")
+        .json(&serde_json::json!({ "model": "image", "prompt": "x", "user": "u1" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert!(response.headers().get("x-ladder-session").is_none());
+    assert!(response.headers().get("x-ladder-pinned").is_none());
+}
