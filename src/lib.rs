@@ -17,6 +17,11 @@
 //! so a throttled provider costs one wasted round trip rather than one per
 //! request. See [`cooldown`].
 //!
+//! A ladder answers on one [`Surface`]: chat, embeddings, images or video. The
+//! media surfaces are the same machinery with the ceiling in a different unit —
+//! per image or per job rather than per million tokens — and, for video, a job
+//! to poll rather than a response to read. See `docs/specs/media-generation.md`.
+//!
 //! Two marketplaces are supported, and their differences are real rather than
 //! cosmetic. Direct providers are the third kind — one seller, no order book —
 //! for models a marketplace may not carry: see [`provider::mistral`] for a
