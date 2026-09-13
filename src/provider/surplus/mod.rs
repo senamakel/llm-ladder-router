@@ -39,8 +39,9 @@ struct MarketOffer {
     media_unit_price: Option<f64>,
     /// The undiscounted counterpart of [`MarketOffer::media_unit_price`].
     direct_media_unit_price: Option<f64>,
-    /// What a media unit is. Only `1M tokens` is read; see
-    /// [`MarketOffer::per_1m`].
+    /// What a media unit is: `1M tokens` for an embedding model, `image` or
+    /// `megapixel` for an image one, `job` for a video one. See
+    /// [`MarketOffer::price`].
     media_unit: Option<String>,
     #[serde(default)]
     available: bool,
@@ -48,26 +49,27 @@ struct MarketOffer {
     healthy: bool,
 }
 
-/// The media unit that is denominated in the same thing the rest of the table
-/// is, and so the only one whose price can be compared with a token price.
-const MEDIA_UNIT_PER_1M: &str = "1M tokens";
-
 impl MarketOffer {
-    /// One of this offer's prices, in micro-USD per million tokens, falling
-    /// back to the media-unit price when the per-token fields are zero.
+    /// One of this offer's prices, in micro-USD per unit, falling back to the
+    /// media-unit price when the per-token fields are zero.
     ///
-    /// An embedding model is billed per unit of *input* rather than per prompt
-    /// and completion token, so Surplus quotes it in `media_unit_price` and
-    /// leaves `price_input_per_1m` and `price_output_per_1m` at zero — measured
-    /// across all 175 offers on `venice-embed-1`. Read naively that is a market
-    /// full of free sellers, which would give an embeddings rung a floor of
-    /// zero and rank it ahead of every honestly-priced rung it competes with.
+    /// A model that is not billed per prompt and completion token is quoted in
+    /// `media_unit_price` with `price_input_per_1m` and `price_output_per_1m`
+    /// left at zero — measured across all 175 offers on `venice-embed-1`, where
+    /// the unit is `1M tokens`, and across every image and video model, where
+    /// it is `image`, `megapixel` or `job`. Read naively that is a market full
+    /// of free sellers, which would give the rung a floor of zero and rank it
+    /// ahead of every honestly-priced rung it competes with.
     ///
-    /// The unit is checked rather than assumed: the same field prices an image
-    /// model per image, and a per-image price compared against a per-token one
-    /// is a worse answer than no price at all. An offer that publishes neither
-    /// form is left at zero, exactly as a chat offer with missing fields is
-    /// today — the marketplace does carry genuinely free models.
+    /// The unit is not checked, only that one was published: a ladder's rungs
+    /// share a surface and therefore a unit, so a per-image price is compared
+    /// only against other per-image prices and a per-token one only against
+    /// per-token ones. A per-megapixel image model beside a per-image one is
+    /// the single mixed case, and at the square default one image is 1.05
+    /// megapixels, close enough to treat as the same unit. An offer that
+    /// publishes neither form is left at zero, exactly as a chat offer with
+    /// missing fields is today — the marketplace does carry genuinely free
+    /// models.
     ///
     /// The caller decides what `media` is, which is how a seller quoting no
     /// price of its own falls back to the undiscounted one rather than to zero:
@@ -77,12 +79,12 @@ impl MarketOffer {
     /// direct price is the honest reading of "this seller published no
     /// discount", and it errs upward, which is the safe direction for a number
     /// a ceiling is compared against.
-    fn per_1m(&self, per_token: Option<f64>, media: Option<f64>) -> f64 {
+    fn price(&self, per_token: Option<f64>, media: Option<f64>) -> f64 {
         let per_token = per_token.unwrap_or(0.0);
         if per_token > 0.0 {
             return per_token;
         }
-        if self.media_unit.as_deref() == Some(MEDIA_UNIT_PER_1M) {
+        if self.media_unit.is_some() {
             return media.unwrap_or(0.0);
         }
         per_token
@@ -115,9 +117,9 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
         .into_iter()
         .map(|offer| {
             let quoted = offer.media_unit_price.or(offer.direct_media_unit_price);
-            let prompt = offer.per_1m(offer.price_input_per_1m, quoted);
-            let completion = offer.per_1m(offer.price_output_per_1m, quoted);
-            let direct = offer.per_1m(offer.direct_output_per_1m, offer.direct_media_unit_price);
+            let prompt = offer.price(offer.price_input_per_1m, quoted);
+            let completion = offer.price(offer.price_output_per_1m, quoted);
+            let direct = offer.price(offer.direct_output_per_1m, offer.direct_media_unit_price);
             Offer {
                 provider: offer
                     .provider
@@ -225,6 +227,11 @@ pub fn serves(wire: Wire, streaming: bool) -> bool {
 /// nothing to express one with, and [`crate::config::Surface::is_cappable`]
 /// says so at load time rather than letting a number sit in the file looking
 /// like a limit.
+///
+/// The two media routes do take the prefix, in the leading position:
+/// `/min50/v1/images/generations` answers 402 and `/min50/v1/video/generations`
+/// answers 401 to an unauthenticated request, where a route that does not
+/// exist answers 404. Measured 2026-09-14.
 #[must_use]
 pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
     let discount = match chosen.min_discount_pct {
@@ -243,7 +250,31 @@ pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
         (Wire::Responses, None) => "/v1/responses".to_string(),
         // Embeddings have no discounted spelling at all; see above.
         (Wire::Embeddings, _) => "/v1/embeddings".to_string(),
+        (Wire::Images, Some(pct)) => format!("/min{pct}/v1/images/generations"),
+        (Wire::Images, None) => IMAGES_PATH.to_string(),
+        (Wire::Video, Some(pct)) => format!("/min{pct}/v1/video/generations"),
+        (Wire::Video, None) => VIDEO_PATH.to_string(),
     }
+}
+
+/// `POST /v1/images/generations`, the undiscounted images route.
+pub const IMAGES_PATH: &str = "/v1/images/generations";
+
+/// `POST /v1/video/generations`, the undiscounted video route.
+///
+/// A video request answers with a `media.job` rather than a clip, and the job
+/// is polled and cancelled at [`video_job_path`].
+pub const VIDEO_PATH: &str = "/v1/video/generations";
+
+/// The path a video job is polled (`GET`) and cancelled (`DELETE`) at.
+///
+/// Un-prefixed on purpose: the discount was applied when the job was
+/// submitted, and the marketplace's own `poll_url` and `cancel_url` name this
+/// spelling. Verified 2026-09-14 — `GET` on a submitted job returned the job,
+/// `DELETE` moved it to `canceled`, and an unknown id is a 404 `not_found`.
+#[must_use]
+pub fn video_job_path(id: &str) -> String {
+    format!("{VIDEO_PATH}/{id}")
 }
 
 /// Applies a chosen rung to an outgoing request body.
