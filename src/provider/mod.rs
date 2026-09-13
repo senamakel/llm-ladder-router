@@ -310,14 +310,14 @@ impl Client {
                 wire: Wire::Video.api_name().to_string(),
             });
         }
-        let response = self
-            .request(method, path)
-            .send()
-            .await
-            .map_err(|source| Error::Upstream {
-                provider: self.name.clone(),
-                source,
-            })?;
+        let response =
+            self.request(method, path)
+                .send()
+                .await
+                .map_err(|source| Error::Upstream {
+                    provider: self.name.clone(),
+                    source,
+                })?;
         self.dispatched(response).await
     }
 

@@ -357,7 +357,11 @@ async fn relay_video_job(
             &[],
         );
     }
-    problem(StatusCode::NOT_FOUND, &format!("no provider knows video job {id}"), &[])
+    problem(
+        StatusCode::NOT_FOUND,
+        &format!("no provider knows video job {id}"),
+        &[],
+    )
 }
 
 /// Whether a caller-supplied job id is safe to place in an upstream path.

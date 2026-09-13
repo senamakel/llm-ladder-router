@@ -1202,7 +1202,10 @@ fn request_defaults_fill_only_the_fields_the_caller_omitted() {
     // A ladder that declares none changes nothing.
     let flash = Config::parse(EXAMPLE).unwrap();
     let mut untouched = serde_json::json!({ "messages": [] });
-    flash.ladder("flash").unwrap().apply_request_defaults(&mut untouched);
+    flash
+        .ladder("flash")
+        .unwrap()
+        .apply_request_defaults(&mut untouched);
     assert_eq!(untouched, serde_json::json!({ "messages": [] }));
 }
 

@@ -14,7 +14,8 @@ const IMAGES_ORDER_BOOK: &str =
     include_str!("../../../tests/fixtures/surplus-images-order-book.json");
 /// `GET /api/markets/kling-o3-pro-text-to-video`, captured 2026-09-14 and
 /// trimmed the same way. Every offer is quoted per `job`.
-const VIDEO_ORDER_BOOK: &str = include_str!("../../../tests/fixtures/surplus-video-order-book.json");
+const VIDEO_ORDER_BOOK: &str =
+    include_str!("../../../tests/fixtures/surplus-video-order-book.json");
 
 fn chosen(min_discount_pct: Option<u8>) -> Chosen {
     Chosen {

@@ -569,6 +569,33 @@ fn each_surface_maps_to_its_own_native_path() {
         surplus::inference_path(&capped, Wire::Responses),
         "/min40/v1/responses"
     );
+
+    // The media arms on the providers that decline both surfaces are never
+    // consulted; they are spelled the `OpenAI` way for want of a better one.
+    assert_eq!(
+        openrouter::inference_path(Wire::Images),
+        "/images/generations"
+    );
+    assert_eq!(
+        openrouter::inference_path(Wire::Video),
+        "/video/generations"
+    );
+    assert_eq!(
+        mistral::inference_path(Wire::Images),
+        "/v1/images/generations"
+    );
+    assert_eq!(
+        mistral::inference_path(Wire::Video),
+        "/v1/video/generations"
+    );
+    assert_eq!(
+        venice::inference_path(Wire::Images),
+        "/api/v1/images/generations"
+    );
+    assert_eq!(
+        venice::inference_path(Wire::Video),
+        "/api/v1/video/generations"
+    );
 }
 
 /// The upstream's own backoff is read when it gives one, and only in the form
@@ -800,7 +827,11 @@ async fn only_surplus_serves_the_media_surfaces() {
     let venice = venice_client(&base);
 
     for wire in [Wire::Images, Wire::Video] {
-        for (client, name) in [(&openrouter, "openrouter"), (&mistral, "mistral"), (&venice, "venice")] {
+        for (client, name) in [
+            (&openrouter, "openrouter"),
+            (&mistral, "mistral"),
+            (&venice, "venice"),
+        ] {
             assert!(!client.serves(wire), "{name} {wire:?}");
             match client
                 .infer(&chosen(), wire, &serde_json::json!({ "prompt": "x" }))
@@ -855,14 +886,14 @@ async fn a_video_job_is_polled_and_cancelled_through_relay() {
     assert_eq!(body["id"], "job-1");
     assert_eq!(body["status"], "completed");
 
-    let cancelled = surplus
-        .relay(reqwest::Method::DELETE, &path)
-        .await
-        .unwrap();
+    let cancelled = surplus.relay(reqwest::Method::DELETE, &path).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&cancelled.body).unwrap();
     assert_eq!(body["status"], "canceled");
 
-    match openrouter_client(&base).relay(reqwest::Method::GET, &path).await {
+    match openrouter_client(&base)
+        .relay(reqwest::Method::GET, &path)
+        .await
+    {
         Err(Error::UnsupportedWire { provider, wire }) => {
             assert_eq!(provider, "openrouter");
             assert_eq!(wire, "Video Generations");
