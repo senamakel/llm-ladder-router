@@ -47,7 +47,7 @@ pub fn inference_path(wire: Wire) -> &'static str {
 pub fn serves(wire: Wire) -> bool {
     match wire {
         Wire::OpenAi | Wire::Embeddings => true,
-        Wire::Anthropic | Wire::Responses => false,
+        Wire::Anthropic | Wire::Responses | Wire::Images | Wire::Video => false,
     }
 }
 
