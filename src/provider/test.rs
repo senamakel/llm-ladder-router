@@ -231,17 +231,7 @@ async fn upstream() -> String {
                 axum::Json(serde_json::json!({ "sent": body.0 }))
             }),
         )
-        // Surplus's video job, polled and cancelled at one path; the method
-        // is echoed so a test can see which was relayed.
-        .route(
-            "/v1/video/generations/{id}",
-            get(|axum::extract::Path(id): axum::extract::Path<String>| async move {
-                axum::Json(serde_json::json!({ "id": id, "status": "completed", "served_by": "api.venice.ai" }))
-            })
-            .delete(|axum::extract::Path(id): axum::extract::Path<String>| async move {
-                axum::Json(serde_json::json!({ "id": id, "status": "canceled" }))
-            }),
-        )
+        .merge(video_job_routes())
         .route(
             "/messages",
             post(|headers: axum::http::HeaderMap| async move {
@@ -278,6 +268,26 @@ async fn upstream() -> String {
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://{address}")
+}
+
+/// Surplus's video job, polled and cancelled at one path. Each answer names
+/// the job it was asked about and what the method did to it, so a test can see
+/// which was relayed.
+fn video_job_routes() -> axum::Router {
+    use axum::extract::Path;
+    use axum::routing::get;
+
+    axum::Router::new().route(
+        "/v1/video/generations/{id}",
+        get(|Path(id): Path<String>| async move {
+            axum::Json(serde_json::json!({
+                "id": id, "status": "completed", "served_by": "api.venice.ai",
+            }))
+        })
+        .delete(|Path(id): Path<String>| async move {
+            axum::Json(serde_json::json!({ "id": id, "status": "canceled" }))
+        }),
+    )
 }
 
 fn openrouter_client(base_url: &str) -> Client {

@@ -110,31 +110,7 @@ impl Config {
                         provider: rung.provider.clone(),
                     });
                 }
-                check_price(
-                    rung.max_cost_per_1m,
-                    &format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
-                )?;
-                check_price(
-                    rung.max_cost_per_unit,
-                    &format!("ladder {} rung {index} max_cost_per_unit", ladder.name),
-                )?;
-                // Each surface is billed in one unit, and a ceiling written in
-                // the other is not a looser or tighter limit — it is a number
-                // that will be compared against prices it does not describe.
-                // A per-Mtok figure on a per-image rung is the likelier slip,
-                // since every other ladder in the file spells it that way.
-                if ladder.surface.is_media() && rung.max_cost_per_1m.is_some() {
-                    return Err(Error::WrongCeilingUnit {
-                        field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
-                        expected: "max_cost_per_unit",
-                    });
-                }
-                if !ladder.surface.is_media() && rung.max_cost_per_unit.is_some() {
-                    return Err(Error::WrongCeilingUnit {
-                        field: format!("ladder {} rung {index} max_cost_per_unit", ladder.name),
-                        expected: "max_cost_per_1m",
-                    });
-                }
+                self.check_rung_ceilings(ladder, index, rung)?;
                 check_effort(
                     rung.reasoning_effort.as_deref(),
                     &format!("ladder {} rung {index} reasoning_effort", ladder.name),
@@ -146,29 +122,6 @@ impl Config {
                     rung.score_multiplier,
                     &format!("ladder {} rung {index} score_multiplier", ladder.name),
                 )?;
-                if (rung.max_cost_per_1m.is_some() || rung.max_cost_per_unit.is_some())
-                    && self
-                        .providers
-                        .get(&rung.provider)
-                        .is_some_and(|provider| !provider.kind.is_marketplace())
-                {
-                    return Err(Error::UnpriceableCeiling {
-                        field: format!("ladder {} rung {index} ceiling", ladder.name),
-                        provider: rung.provider.clone(),
-                    });
-                }
-                // A ceiling on the embeddings surface has nothing to bind
-                // against: no marketplace publishes a price filter for it. The
-                // provider's own ceiling is dropped silently by
-                // [`Ladder::cap_for`] because it was written for the chat
-                // ladders and inherited by accident, but one written here was
-                // meant, and a limit that never limits anything is worth
-                // refusing where it is still a typo.
-                if !ladder.surface.is_cappable() && rung.max_cost_per_1m.is_some() {
-                    return Err(Error::UncappableSurface {
-                        field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
-                    });
-                }
             }
             if let Some(fallback) = &ladder.fallback {
                 if !self.providers.contains_key(&fallback.provider) {
@@ -193,6 +146,65 @@ impl Config {
             }
         }
 
+        Ok(())
+    }
+
+    /// Checks a rung's ceilings: that each is a usable amount of money, is in
+    /// the unit its surface is billed in, and has an order book to bind
+    /// against.
+    ///
+    /// # Errors
+    ///
+    /// As the ceiling items of [`Config::validate`].
+    fn check_rung_ceilings(&self, ladder: &Ladder, index: usize, rung: &Rung) -> Result<()> {
+        check_price(
+            rung.max_cost_per_1m,
+            &format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+        )?;
+        check_price(
+            rung.max_cost_per_unit,
+            &format!("ladder {} rung {index} max_cost_per_unit", ladder.name),
+        )?;
+        // Each surface is billed in one unit, and a ceiling written in
+        // the other is not a looser or tighter limit — it is a number
+        // that will be compared against prices it does not describe.
+        // A per-Mtok figure on a per-image rung is the likelier slip,
+        // since every other ladder in the file spells it that way.
+        if ladder.surface.is_media() && rung.max_cost_per_1m.is_some() {
+            return Err(Error::WrongCeilingUnit {
+                field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+                expected: "max_cost_per_unit",
+            });
+        }
+        if !ladder.surface.is_media() && rung.max_cost_per_unit.is_some() {
+            return Err(Error::WrongCeilingUnit {
+                field: format!("ladder {} rung {index} max_cost_per_unit", ladder.name),
+                expected: "max_cost_per_1m",
+            });
+        }
+        if (rung.max_cost_per_1m.is_some() || rung.max_cost_per_unit.is_some())
+            && self
+                .providers
+                .get(&rung.provider)
+                .is_some_and(|provider| !provider.kind.is_marketplace())
+        {
+            return Err(Error::UnpriceableCeiling {
+                field: format!("ladder {} rung {index} ceiling", ladder.name),
+                provider: rung.provider.clone(),
+            });
+        }
+        // A ceiling on the embeddings surface has nothing to bind
+        // against: no marketplace publishes a price filter for it. The
+        // provider's own ceiling is dropped silently by
+        // [`Ladder::cap_for`] because it was written for the chat
+        // ladders and inherited by accident, but one written here was
+        // meant, and a limit that never limits anything is worth
+        // refusing where it is still a typo.
+        if !ladder.surface.is_cappable() && rung.max_cost_per_1m.is_some() {
+            return Err(Error::UncappableSurface {
+                field: format!("ladder {} rung {index} max_cost_per_1m", ladder.name),
+            });
+        }
         Ok(())
     }
 
