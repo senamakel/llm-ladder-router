@@ -1570,13 +1570,15 @@ async fn a_video_request_submits_a_job_that_can_be_polled_and_cancelled() {
     let job: serde_json::Value = response.json().await.unwrap();
     assert_eq!(job["object"], "media.job");
     // The submission was watched until the marketplace placed it, so the
-    // status the caller sees is the latest one, not the 202's `queued`; and
-    // the job's own links now point at the router rather than the marketplace.
+    // status the caller sees is the latest one, not the 202's `queued`. The
+    // mock spells its links on the live host, not on its own base URL, so
+    // they are relayed untouched: the router rewrites only links it can
+    // vouch for.
     assert_eq!(job["status"], "completed");
     let id = job["id"].as_str().unwrap().to_string();
     assert_eq!(
         job["poll_url"],
-        format!("{router}/v1/video/generations/{id}")
+        format!("https://api.surplusintelligence.ai/v1/video/generations/{id}")
     );
 
     let polled = client
@@ -1769,16 +1771,18 @@ fn video_failover_config(surplus: &str) -> String {
           [ladders.request_defaults]
           aspect_ratio = "1:1"
 
+          # The mock quotes one price for every model, so the multiplier is
+          # what ranks the fast rung first, as its lower price does live.
           [[ladders.rungs]]
           provider = "surplus"
           model = "venice-seedance-2-fast-t2v"
-          score_multiplier = 1.0
+          score_multiplier = 4.0
           max_cost_per_unit = 0.20
 
           [[ladders.rungs]]
           provider = "surplus"
           model = "kling-o3-standard-text-to-video"
-          score_multiplier = 2.0
+          score_multiplier = 1.0
           max_cost_per_unit = 0.20
         "#
     )
