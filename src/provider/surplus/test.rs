@@ -550,6 +550,15 @@ fn a_rung_the_marketplace_no_longer_lists_or_that_refuses_the_frame_advances() {
         ),
         Disposition::Advance
     );
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"type":"invalid_request_error","code":"request_rejected","message":"The model 'gpt-5-image-mini' does not exist."}}"#
+        ),
+        Disposition::Advance
+    );
+    assert!(is_delisted("venice-recraft-v4-pro is not a valid model ID"));
+    assert!(!is_delisted("prompt must be shorter"));
     // A 400 about the request itself still stops the walk.
     assert_eq!(
         classify(

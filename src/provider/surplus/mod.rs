@@ -277,6 +277,17 @@ pub fn video_job_path(id: &str) -> String {
     format!("{VIDEO_PATH}/{id}")
 }
 
+/// Whether a 400 body is the marketplace saying it does not carry the model
+/// the rung named, in either of the spellings seen on 2026-09-14:
+/// `venice-recraft-v4-pro is not a valid model ID` for a model still in
+/// `/v1/models`, and `The model 'gpt-5-image-mini' does not exist` for one
+/// that is not. Neither is going to change by the next request, so a rung
+/// that says it is parked rather than merely stepped past.
+#[must_use]
+pub fn is_delisted(body: &str) -> bool {
+    body.contains("is not a valid model ID") || body.contains("does not exist")
+}
+
 /// The path one artifact of a finished video job is fetched from.
 ///
 /// A finished job lists its outputs under `results[].url`, each spelled
@@ -505,7 +516,7 @@ pub fn classify(status: reqwest::StatusCode, body: &[u8]) -> Disposition {
     // the morning once the two rungs above it were out of sellers, and the
     // second is what a square video ladder gets from every 16:9-only rung.
     if status == reqwest::StatusCode::BAD_REQUEST
-        && (text.contains("is not a valid model ID") || text.contains("Unsupported aspect_ratio"))
+        && (is_delisted(&text) || text.contains("Unsupported aspect_ratio"))
     {
         return Disposition::Advance;
     }

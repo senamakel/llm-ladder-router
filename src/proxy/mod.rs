@@ -844,6 +844,7 @@ async fn park_for(state: &State, ladder: &str, chosen: &Chosen, kind: Failure) {
         }
         Failure::Refused => park(state, ladder, chosen, None, "refused this router").await,
         Failure::Unavailable => park(state, ladder, chosen, None, "no seller took the job").await,
+        Failure::Delisted => park(state, ladder, chosen, None, "model not carried").await,
         Failure::Broke => {}
     }
 }
@@ -902,6 +903,9 @@ enum Failure {
     /// seller. Parked like a refusal: the marketplace has just tried every
     /// seller it has for that model and the next job would go the same way.
     Unavailable,
+    /// A rung naming a model the marketplace says it does not carry. Parked
+    /// on the same argument: the listing will not be back by the next request.
+    Delisted,
     /// Anything else the upstream owns.
     Broke,
 }
@@ -978,6 +982,11 @@ async fn dispatch(
                     .collect::<String>()
             ),
             kind: match dispatched.status {
+                StatusCode::BAD_REQUEST
+                    if surplus::is_delisted(&String::from_utf8_lossy(&dispatched.body)) =>
+                {
+                    Failure::Delisted
+                }
                 StatusCode::TOO_MANY_REQUESTS => Failure::RateLimited(dispatched.retry_after),
                 StatusCode::UNAUTHORIZED
                 | StatusCode::FORBIDDEN
