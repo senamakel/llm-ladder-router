@@ -574,7 +574,10 @@ fn a_polled_job_is_read_for_whether_the_marketplace_placed_it() {
         "marketplace_status": "submitted", "marketplace_attempts": 2
     });
     assert_eq!(job_progress(&running), JobProgress::Taken);
-    assert_eq!(job_progress(&serde_json::json!({ "status": "succeeded" })), JobProgress::Taken);
+    assert_eq!(
+        job_progress(&serde_json::json!({ "status": "succeeded" })),
+        JobProgress::Taken
+    );
     // Queued but already assigned to a seller counts as taken.
     assert_eq!(
         job_progress(&serde_json::json!({ "status": "queued", "served_by": "api.venice.ai" })),
@@ -593,7 +596,16 @@ fn a_polled_job_is_read_for_whether_the_marketplace_placed_it() {
         )
     );
     let broke = serde_json::json!({ "status": "failed", "served_by": "api.venice.ai", "error": { "type": "provider_error" } });
-    assert_eq!(job_progress(&broke), JobProgress::Failed("provider_error: no detail".to_string()));
-    assert_eq!(job_progress(&serde_json::json!({ "status": "canceled" })), JobProgress::Failed("canceled: no detail".to_string()));
-    assert_eq!(video_artifact_path("01JOB", "0"), "/v1/media/artifacts/01JOB/0");
+    assert_eq!(
+        job_progress(&broke),
+        JobProgress::Failed("provider_error: no detail".to_string())
+    );
+    assert_eq!(
+        job_progress(&serde_json::json!({ "status": "canceled" })),
+        JobProgress::Failed("canceled: no detail".to_string())
+    );
+    assert_eq!(
+        video_artifact_path("01JOB", "0"),
+        "/v1/media/artifacts/01JOB/0"
+    );
 }

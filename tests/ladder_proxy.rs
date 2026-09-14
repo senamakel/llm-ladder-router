@@ -1629,122 +1629,131 @@ async fn mock_surplus_video_marketplace() -> (String, Arc<Mutex<Recorded>>) {
         recorded: recorded.clone(),
     };
 
-    async fn submit(
-        State(state): State<MockState>,
-        uri: axum::http::Uri,
-        Json(body): Json<serde_json::Value>,
-    ) -> (StatusCode, Json<serde_json::Value>) {
-        let model = body["model"].as_str().unwrap().to_string();
-        {
-            let mut recorded = state.recorded.lock().unwrap();
-            recorded.bodies.push(body);
-            recorded.paths.push(uri.path().to_string());
-        }
-        (
-            StatusCode::ACCEPTED,
-            Json(serde_json::json!({
-                "id": format!("job-{model}"),
-                "object": "media.job",
-                "kind": "video",
-                "status": "queued",
-                "poll_url": format!("https://surplus.mock/v1/video/generations/job-{model}"),
-                "cancel_url": format!("https://surplus.mock/v1/video/generations/job-{model}"),
-                "served_by": "unknown",
-                "provider_family": "unknown",
-                "marketplace_status": "unknown",
-                "marketplace_attempts": 0,
-            })),
+    let app = Router::new()
+        .route("/api/markets/{model}", get(surplus_media_order_book))
+        .route("/v1/buyer/me", get(surplus_balance))
+        .route("/v1/video/generations", post(marketplace_submit))
+        .route("/{prefix}/v1/video/generations", post(marketplace_submit))
+        .route(
+            "/v1/video/generations/{id}",
+            get(marketplace_poll).delete(marketplace_poll),
         )
-    }
+        .route(
+            "/v1/media/artifacts/{id}/{index}",
+            get(marketplace_artifact),
+        )
+        .with_state(state);
 
-    async fn poll(
-        State(state): State<MockState>,
-        method: axum::http::Method,
-        uri: axum::http::Uri,
-        Path(id): Path<String>,
-    ) -> (StatusCode, Json<serde_json::Value>) {
-        state
-            .recorded
-            .lock()
-            .unwrap()
-            .paths
-            .push(format!("{method} {}", uri.path()));
-        let Some(model) = id.strip_prefix("job-") else {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": { "code": "not_found" } })),
-            );
-        };
-        if model.contains("fast") {
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "id": id,
-                    "object": "media.job",
-                    "kind": "video",
-                    "status": "failed",
-                    "served_by": "unknown",
-                    "provider_family": "unknown",
-                    "marketplace_status": "unknown",
-                    "marketplace_attempts": 1,
-                    "error": {
-                        "type": "provider_unavailable",
-                        "message": "No provider could accept this job right now. Please retry."
-                    }
-                })),
-            );
-        }
-        (
+    (serve(app).await, recorded)
+}
+
+async fn marketplace_submit(
+    State(state): State<MockState>,
+    uri: axum::http::Uri,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let model = body["model"].as_str().unwrap().to_string();
+    {
+        let mut recorded = state.recorded.lock().unwrap();
+        recorded.bodies.push(body);
+        recorded.paths.push(uri.path().to_string());
+    }
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "id": format!("job-{model}"),
+            "object": "media.job",
+            "kind": "video",
+            "status": "queued",
+            "poll_url": format!("https://surplus.mock/v1/video/generations/job-{model}"),
+            "cancel_url": format!("https://surplus.mock/v1/video/generations/job-{model}"),
+            "served_by": "unknown",
+            "provider_family": "unknown",
+            "marketplace_status": "unknown",
+            "marketplace_attempts": 0,
+        })),
+    )
+}
+
+async fn marketplace_poll(
+    State(state): State<MockState>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    state
+        .recorded
+        .lock()
+        .unwrap()
+        .paths
+        .push(format!("{method} {}", uri.path()));
+    let Some(model) = id.strip_prefix("job-") else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": { "code": "not_found" } })),
+        );
+    };
+    if model.contains("fast") {
+        return (
             StatusCode::OK,
             Json(serde_json::json!({
                 "id": id,
                 "object": "media.job",
                 "kind": "video",
-                "status": "running",
-                "poll_url": format!("https://surplus.mock/v1/video/generations/{id}"),
-                "cancel_url": format!("https://surplus.mock/v1/video/generations/{id}"),
-                "served_by": "api.venice.ai",
-                "provider_family": "venice",
-                "marketplace_status": "submitted",
+                "status": "failed",
+                "served_by": "unknown",
+                "provider_family": "unknown",
+                "marketplace_status": "unknown",
                 "marketplace_attempts": 1,
-                "results": [{
-                    "artifact_index": 0,
-                    "url": format!("https://surplus.mock/v1/media/artifacts/{id}/0"),
-                    "content_type": "video/mp4",
-                    "bytes": 4,
-                }],
+                "error": {
+                    "type": "provider_unavailable",
+                    "message": "No provider could accept this job right now. Please retry."
+                }
             })),
-        )
+        );
     }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": id,
+            "object": "media.job",
+            "kind": "video",
+            "status": "running",
+            "poll_url": format!("https://surplus.mock/v1/video/generations/{id}"),
+            "cancel_url": format!("https://surplus.mock/v1/video/generations/{id}"),
+            "served_by": "api.venice.ai",
+            "provider_family": "venice",
+            "marketplace_status": "submitted",
+            "marketplace_attempts": 1,
+            "results": [{
+                "artifact_index": 0,
+                "url": format!("https://surplus.mock/v1/media/artifacts/{id}/0"),
+                "content_type": "video/mp4",
+                "bytes": 4,
+            }],
+        })),
+    )
+}
 
-    async fn artifact(
-        State(state): State<MockState>,
-        uri: axum::http::Uri,
-        Path((id, index)): Path<(String, String)>,
-    ) -> axum::response::Response {
-        state
-            .recorded
-            .lock()
-            .unwrap()
-            .paths
-            .push(format!("GET {}", uri.path()));
-        if !id.starts_with("job-") || index != "0" {
-            return StatusCode::NOT_FOUND.into_response();
-        }
-        ([(axum::http::header::CONTENT_TYPE, "video/mp4")], b"\x00\x00\x00\x18".to_vec())
-            .into_response()
+async fn marketplace_artifact(
+    State(state): State<MockState>,
+    uri: axum::http::Uri,
+    Path((id, index)): Path<(String, String)>,
+) -> axum::response::Response {
+    state
+        .recorded
+        .lock()
+        .unwrap()
+        .paths
+        .push(format!("GET {}", uri.path()));
+    if !id.starts_with("job-") || index != "0" {
+        return StatusCode::NOT_FOUND.into_response();
     }
-
-    let app = Router::new()
-        .route("/api/markets/{model}", get(surplus_media_order_book))
-        .route("/v1/buyer/me", get(surplus_balance))
-        .route("/v1/video/generations", post(submit))
-        .route("/{prefix}/v1/video/generations", post(submit))
-        .route("/v1/video/generations/{id}", get(poll).delete(poll))
-        .route("/v1/media/artifacts/{id}/{index}", get(artifact))
-        .with_state(state);
-
-    (serve(app).await, recorded)
+    (
+        [(axum::http::header::CONTENT_TYPE, "video/mp4")],
+        b"\x00\x00\x00\x18".to_vec(),
+    )
+        .into_response()
 }
 
 /// A video ladder of two Surplus rungs, the cheap one first, and the base
@@ -1831,7 +1840,10 @@ async fn a_video_job_no_seller_takes_advances_the_ladder_and_parks_the_rung() {
             ]
         );
         assert_eq!(recorded.bodies[0]["model"], "venice-seedance-2-fast-t2v");
-        assert_eq!(recorded.bodies[1]["model"], "kling-o3-standard-text-to-video");
+        assert_eq!(
+            recorded.bodies[1]["model"],
+            "kling-o3-standard-text-to-video"
+        );
     }
 
     // Parked: the second request goes straight to the rung that works.
@@ -1845,7 +1857,10 @@ async fn a_video_job_no_seller_takes_advances_the_ladder_and_parks_the_rung() {
     assert_eq!(again.headers()["x-ladder-rung"], "1");
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.bodies.len(), 3);
-    assert_eq!(recorded.bodies[2]["model"], "kling-o3-standard-text-to-video");
+    assert_eq!(
+        recorded.bodies[2]["model"],
+        "kling-o3-standard-text-to-video"
+    );
 }
 
 /// The links inside a job point at the marketplace, which the caller cannot
@@ -1894,7 +1909,10 @@ async fn a_video_job_links_point_at_the_router_and_its_artifacts_are_relayed() {
         .unwrap();
     assert_eq!(artifact.status(), reqwest::StatusCode::OK);
     assert_eq!(artifact.headers()["content-type"], "video/mp4");
-    assert_eq!(artifact.bytes().await.unwrap().to_vec(), b"\x00\x00\x00\x18".to_vec());
+    assert_eq!(
+        artifact.bytes().await.unwrap().to_vec(),
+        b"\x00\x00\x00\x18".to_vec()
+    );
 
     let missing = client
         .get(format!("{router}/v1/media/artifacts/nope/0"))
@@ -1910,7 +1928,11 @@ async fn a_video_job_links_point_at_the_router_and_its_artifacts_are_relayed() {
     assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
 
     let recorded = recorded.lock().unwrap();
-    assert!(recorded.paths.contains(&format!("GET /v1/media/artifacts/{id}/0")));
+    assert!(
+        recorded
+            .paths
+            .contains(&format!("GET /v1/media/artifacts/{id}/0"))
+    );
 }
 
 /// A job nobody knows is a 404 from the router, once every provider serving

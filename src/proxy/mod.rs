@@ -459,7 +459,10 @@ fn rewrite_job_urls(
                 rewrite(value);
             }
         }
-        if let Some(results) = object.get_mut("results").and_then(serde_json::Value::as_array_mut) {
+        if let Some(results) = object
+            .get_mut("results")
+            .and_then(serde_json::Value::as_array_mut)
+        {
             for result in results {
                 if let Some(value) = result.get_mut("url") {
                     rewrite(value);
@@ -612,7 +615,16 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
     let mut body = body;
     ladder_config.apply_request_defaults(&mut body);
     let origin = origin_of(headers);
-    walk(&state, ladder_config, &name, session, body, wire, origin.as_deref()).await
+    walk(
+        &state,
+        ladder_config,
+        &name,
+        session,
+        body,
+        wire,
+        origin.as_deref(),
+    )
+    .await
 }
 
 /// Walks a ladder, dispatching until a rung serves or the rungs run out.
@@ -941,7 +953,11 @@ async fn confirm_job(
     }
     let Some(id) = serde_json::from_slice::<serde_json::Value>(&submitted.body)
         .ok()
-        .and_then(|job| job.get("id").and_then(serde_json::Value::as_str).map(str::to_string))
+        .and_then(|job| {
+            job.get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
     else {
         return Confirmed::Accepted(submitted.clone());
     };
