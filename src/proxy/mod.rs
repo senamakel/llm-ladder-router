@@ -11,6 +11,7 @@
 //! its rung for a cooldown, because the upstream refusing on purpose is a fact
 //! about the next few seconds rather than about this one request.
 
+pub mod jobs;
 mod refresh;
 mod types;
 
@@ -97,6 +98,10 @@ pub fn build_with_credentials(
             config_sessions.max_entries,
         ))),
         cooldowns: Arc::new(RwLock::new(crate::cooldown::Cooldowns::new())),
+        jobs: Arc::new(RwLock::new(jobs::RecentJobs::new(
+            RECENT_JOB_TTL,
+            RECENT_JOB_CAP,
+        ))),
     };
 
     let app = axum::Router::new()
@@ -372,6 +377,9 @@ async fn relay_video_path(
         match client.relay(method.clone(), path).await {
             Ok(dispatched) if dispatched.status == StatusCode::NOT_FOUND => {}
             Ok(mut dispatched) => {
+                if method == reqwest::Method::GET && dispatched.status == StatusCode::OK {
+                    settle_job(state, id, &dispatched.body).await;
+                }
                 rewrite_job_urls(&mut dispatched, client.base_url(), origin.as_deref());
                 return relayed(&dispatched, |_| {
                     problem(
@@ -399,6 +407,48 @@ async fn relay_video_path(
         &format!("no provider knows video job {id}"),
         &[],
     )
+}
+
+/// Reads a relayed poll for the job's fate, and parks the rung that
+/// submitted it when the marketplace reports it failed.
+///
+/// A job that fails after the confirmation window -- a seller took it and
+/// broke two minutes into the render -- cannot be walked past for the caller
+/// who submitted it; the job is theirs and the marketplace's. What can be
+/// done is for the next submission, theirs or anybody's, not to land on the
+/// same rung, which is what a cooldown is for. A finished job is forgotten
+/// either way.
+async fn settle_job(state: &State, id: &str, body: &[u8]) {
+    let Ok(job) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return;
+    };
+    match surplus::job_progress(&job) {
+        surplus::JobProgress::Waiting | surplus::JobProgress::Taken
+            if !surplus::job_is_finished(&job) => {}
+        progress => {
+            let owner = state.jobs.write().await.owner(id).cloned();
+            if let Some(owner) = owner {
+                state.jobs.write().await.forget(id);
+                if let surplus::JobProgress::Failed(detail) = progress {
+                    let cooled = state.config.rate_limits.cooldown_for(None);
+                    state
+                        .cooldowns
+                        .write()
+                        .await
+                        .cool(&owner.provider, &owner.model, cooled.duration);
+                    tracing::warn!(
+                        ladder = %owner.ladder,
+                        provider = %owner.provider,
+                        model = %owner.model,
+                        job = id,
+                        detail = %detail,
+                        cooldown_secs = cooled.duration.as_secs(),
+                        "video job failed after handover, rung parked"
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Where the caller reached this router, as the scheme and host a URL back
@@ -671,7 +721,17 @@ async fn walk(
         };
 
         match dispatch(client, &chosen, wire, &body, confirm, origin).await {
-            Attempt::Served(response) => {
+            Attempt::Served(response, job_id) => {
+                if let Some(id) = job_id {
+                    state.jobs.write().await.insert(
+                        &id,
+                        jobs::JobOwner {
+                            ladder: name.to_string(),
+                            provider: chosen.provider.clone(),
+                            model: chosen.model.clone(),
+                        },
+                    );
+                }
                 tracing::info!(
                     ladder = %name,
                     rung = chosen.rung,
@@ -843,7 +903,8 @@ enum Failure {
 
 /// What one rung's dispatch produced.
 enum Attempt {
-    Served(Response),
+    /// The rung served; for a video submission, the id of the job it made.
+    Served(Response, Option<String>),
     /// The upstream failed on its own account, and whether it was refusing on
     /// purpose or simply broken.
     Advance {
@@ -886,6 +947,11 @@ async fn dispatch(
         rewrite_job_urls(&mut dispatched, client.base_url(), origin);
         disposition = Disposition::Served;
     }
+    let job_id = if wire == Wire::Video && disposition == Disposition::Served {
+        job_id_of(&dispatched.body)
+    } else {
+        None
+    };
     let built = relayed(&dispatched, |_| {
         problem(
             StatusCode::BAD_GATEWAY,
@@ -895,7 +961,7 @@ async fn dispatch(
     });
 
     match disposition {
-        Disposition::Served => Attempt::Served(built),
+        Disposition::Served => Attempt::Served(built, job_id),
         Disposition::CallerError => Attempt::CallerError(built),
         Disposition::Advance => Attempt::Advance {
             detail: format!(
@@ -917,6 +983,16 @@ async fn dispatch(
     }
 }
 
+/// The id of the `media.job` in a body, when there is one worth relaying.
+fn job_id_of(body: &[u8]) -> Option<String> {
+    let job = serde_json::from_slice::<serde_json::Value>(body).ok()?;
+    if job.get("object").and_then(serde_json::Value::as_str) != Some("media.job") {
+        return None;
+    }
+    let id = job.get("id").and_then(serde_json::Value::as_str)?;
+    is_job_id(id).then(|| id.to_string())
+}
+
 /// What watching a freshly submitted video job decided.
 enum Confirmed {
     /// The job as last seen: picked up by a seller, finished, or still queued
@@ -926,6 +1002,13 @@ enum Confirmed {
     /// The marketplace failed the job on its own account.
     Failed(String),
 }
+
+/// How long a submitted video job is remembered, which is about as long as a
+/// render can take before the marketplace itself expires it (its jobs carry a
+/// thirty-minute `expires_at`).
+const RECENT_JOB_TTL: std::time::Duration = std::time::Duration::from_secs(45 * 60);
+/// How many recent jobs are remembered at most.
+const RECENT_JOB_CAP: usize = 4_096;
 
 /// How often a submitted job is looked at inside the confirmation window.
 const JOB_CONFIRM_POLL: std::time::Duration = std::time::Duration::from_secs(2);

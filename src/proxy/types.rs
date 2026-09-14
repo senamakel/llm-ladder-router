@@ -61,4 +61,7 @@ pub struct State {
     pub sessions: Arc<RwLock<SessionPins>>,
     /// Which rungs are out of service after a rate limit, and until when.
     pub cooldowns: Arc<RwLock<Cooldowns>>,
+    /// Which rung submitted each recent video job, so a job that fails after
+    /// it was handed over can still park its rung.
+    pub jobs: Arc<RwLock<super::jobs::RecentJobs>>,
 }

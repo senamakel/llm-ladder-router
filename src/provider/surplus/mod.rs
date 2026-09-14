@@ -352,6 +352,20 @@ pub fn job_progress(job: &serde_json::Value) -> JobProgress {
     }
 }
 
+/// Whether a polled job is over, for better or worse.
+#[must_use]
+pub fn job_is_finished(job: &serde_json::Value) -> bool {
+    let status = job
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("queued")
+        .to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "succeeded" | "success" | "completed" | "done" | "finished" | "ready"
+    ) || matches!(job_progress(job), JobProgress::Failed(_))
+}
+
 /// Applies a chosen rung to an outgoing request body.
 ///
 /// The model is rewritten - the ceiling travels in the path, not the body -
