@@ -52,6 +52,7 @@ fn ladder(name: &str, surface: Surface) -> crate::config::Ladder {
         cost_basis: CostBasis::default(),
         reasoning_effort: None,
         request_defaults: BTreeMap::new(),
+        job_confirm_secs: 0,
         rungs: Vec::new(),
         fallback: None,
     }
