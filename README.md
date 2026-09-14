@@ -144,6 +144,7 @@ the last one that worked.
 | `POST /v1/embeddings` | OpenAI embeddings |
 | `POST /v1/images/generations` | OpenAI images (Surplus only) |
 | `POST /v1/video/generations` | video jobs (Surplus only); `GET`/`DELETE` `/{id}` polls and cancels |
+| `GET /v1/media/artifacts/{id}/{n}` | a finished video job's clip, fetched on the caller's behalf |
 | `GET /v1/models` | the configured ladders, listed as models |
 | `GET /healthz` | liveness |
 
@@ -245,12 +246,26 @@ all of them facts about how media is sold:
   per clip) instead of `max_cost_per_1m`; each is refused on the other's
   surface, and the provider's per-Mtok ceiling is not inherited. The ceiling
   still binds through Surplus's `/min{N}/` prefix.
-- **Video is a job.** `POST /v1/video/generations` answers at once with a
+- **Video is a job.** `POST /v1/video/generations` answers with a
   `media.job`; poll `GET /v1/video/generations/{id}` until it finishes, or
-  `DELETE` it to cancel. Both are relayed to the provider that took the job.
-- **Square by default.** A ladder's `request_defaults` table fills in fields
-  the caller left out — `size = "1024x1024"` for images, `aspect_ratio = "1:1"`
-  for video — and never overrides one they sent.
+  `DELETE` it to cancel. A `202` only means the job was queued: the
+  marketplace goes looking for a seller afterwards, and may fail the job
+  with `provider_unavailable` seconds later. So the router **watches a
+  submission for `job_confirm_secs`** (default 20) before handing it over —
+  a job a seller takes is handed over at once with its latest status, one
+  the marketplace fails parks the rung and the ladder walks on, and one
+  still queued when the window closes is handed over as it is. The finished
+  job lists its clip under `results[].url` on the marketplace's own host,
+  which the router's key cannot fetch, so the router relays
+  `GET /v1/media/artifacts/{id}/{n}` and rewrites every link in a job it
+  relays (`poll_url`, `cancel_url`, `results[].url`) to its own origin,
+  read from `Host` and `X-Forwarded-Proto`.
+- **Square by default.** `request_defaults` on a ladder fills in fields the
+  caller left out — `size = "1024x1024"` for images, `aspect_ratio = "1:1"`
+  for video — and never overrides one they sent. A rung whose model renders
+  only widescreen answers a square request with a 400, which is read as that
+  rung declining rather than the caller's mistake, as is a rung naming a
+  model the marketplace no longer lists.
 
 Only Surplus carries either surface; a rung elsewhere declines before the round
 trip. The example configuration's `vision` ladder is an ordinary chat ladder

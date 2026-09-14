@@ -680,6 +680,13 @@ surface = "images"
 name = "video"
 aliases = ["video-v1"]
 surface = "video"
+# How long a submission is watched before the job is handed over. A 202 is
+# the marketplace queueing the job, not a seller taking it; the cheapest rung
+# below failed every job with `provider_unavailable` about ten seconds after
+# accepting it on 2026-09-14, while the rungs above rendered fine. Inside the
+# window a job that fails parks the rung and the ladder walks on; one a seller
+# takes is handed over at once. Zero hands the 202 straight back.
+job_confirm_secs = 20
 
   [ladders.request_defaults]
   aspect_ratio = "1:1"
