@@ -431,11 +431,11 @@ async fn settle_job(state: &State, id: &str, body: &[u8]) {
                 state.jobs.write().await.forget(id);
                 if let surplus::JobProgress::Failed(detail) = progress {
                     let cooled = state.config.rate_limits.cooldown_for(None);
-                    state
-                        .cooldowns
-                        .write()
-                        .await
-                        .cool(&owner.provider, &owner.model, cooled.duration);
+                    state.cooldowns.write().await.cool(
+                        &owner.provider,
+                        &owner.model,
+                        cooled.duration,
+                    );
                     tracing::warn!(
                         ladder = %owner.ladder,
                         provider = %owner.provider,

@@ -1693,6 +1693,32 @@ async fn marketplace_poll(
             Json(serde_json::json!({ "error": { "code": "not_found" } })),
         );
     };
+    // A seller takes this one and then breaks on the render: running on the
+    // first poll, failed on every later one.
+    let polls = state
+        .recorded
+        .lock()
+        .unwrap()
+        .paths
+        .iter()
+        .filter(|path| path.starts_with("GET ") && path.ends_with(&id))
+        .count();
+    if model.contains("breaks") && polls > 1 {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": id,
+                "object": "media.job",
+                "kind": "video",
+                "status": "failed",
+                "served_by": "api.venice.ai",
+                "provider_family": "venice",
+                "marketplace_status": "submitted",
+                "marketplace_attempts": 1,
+                "error": { "type": "provider_error", "message": "render failed" }
+            })),
+        );
+    }
     if model.contains("fast") {
         return (
             StatusCode::OK,
@@ -1754,6 +1780,92 @@ async fn marketplace_artifact(
         b"\x00\x00\x00\x18".to_vec(),
     )
         .into_response()
+}
+
+/// A video ladder of one rung a seller takes and then breaks on, and one
+/// that renders, the first ranked first.
+fn video_breaks_config(surplus: &str) -> String {
+    format!(
+        r#"
+        [credits]
+        min_balance_usd = 0.5
+
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{surplus}"
+        api_key_env = "TEST_SURPLUS_KEY"
+        max_cost_per_1m = 1.00
+
+        [[ladders]]
+        name = "video"
+        surface = "video"
+        job_confirm_secs = 5
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "seedance-breaks-text-to-video"
+          score_multiplier = 4.0
+          max_cost_per_unit = 0.20
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "kling-o3-standard-text-to-video"
+          score_multiplier = 1.0
+          max_cost_per_unit = 0.20
+        "#
+    )
+}
+
+/// A job that a seller takes and then fails on, minutes after the router
+/// handed it over, still parks its rung: the router remembers whose job it
+/// was, reads the failure off the poll it relays, and the caller's
+/// resubmission lands one rung up.
+#[tokio::test]
+async fn a_video_job_that_fails_after_handover_parks_its_rung_for_the_resubmission() {
+    let (surplus, recorded) = mock_surplus_video_marketplace().await;
+    let router = start_router(&video_breaks_config(&surplus)).await;
+    let client = reqwest::Client::new();
+
+    let first = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "waves on a shore" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.headers()["x-ladder-rung"], "0");
+    let job: serde_json::Value = first.json().await.unwrap();
+    assert_eq!(job["status"], "running");
+    let id = job["id"].as_str().unwrap().to_string();
+
+    // The caller polls and learns the bad news; so does the router.
+    let polled: serde_json::Value = client
+        .get(format!("{router}/v1/video/generations/{id}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(polled["status"], "failed");
+    assert_eq!(polled["error"]["type"], "provider_error");
+
+    let second = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "waves on a shore, take 2" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.headers()["x-ladder-rung"], "1");
+    assert_eq!(
+        second.headers()["x-ladder-model"],
+        "kling-o3-standard-text-to-video"
+    );
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.bodies.len(), 2);
+    assert_eq!(
+        recorded.bodies[1]["model"],
+        "kling-o3-standard-text-to-video"
+    );
 }
 
 /// A video ladder of two Surplus rungs, the cheap one first, and the base

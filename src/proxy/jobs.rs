@@ -51,7 +51,11 @@ impl RecentJobs {
     /// Records who submitted a job.
     pub fn insert(&mut self, id: &str, owner: JobOwner) {
         self.evict();
-        if self.owners.insert(id.to_string(), (owner, Instant::now())).is_none() {
+        if self
+            .owners
+            .insert(id.to_string(), (owner, Instant::now()))
+            .is_none()
+        {
             self.order.push_back(id.to_string());
         }
         while self.order.len() > self.max_entries {
