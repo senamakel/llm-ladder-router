@@ -691,18 +691,7 @@ async fn walk(
                 );
             }
             Attempt::Advance { detail, kind } => {
-                match kind {
-                    Failure::RateLimited(retry_after) => {
-                        park(state, name, &chosen, retry_after, "rate limited").await;
-                    }
-                    Failure::Refused => {
-                        park(state, name, &chosen, None, "refused this router").await;
-                    }
-                    Failure::Unavailable => {
-                        park(state, name, &chosen, None, "no seller took the job").await;
-                    }
-                    Failure::Broke => {}
-                }
+                park_for(state, name, &chosen, kind).await;
                 tracing::warn!(
                     ladder = %name,
                     rung = chosen.rung,
@@ -768,6 +757,18 @@ async fn choose(
         tried,
         pin,
     )
+}
+
+/// Parks a failed rung when its failure says the next request would fail too.
+async fn park_for(state: &State, ladder: &str, chosen: &Chosen, kind: Failure) {
+    match kind {
+        Failure::RateLimited(retry_after) => {
+            park(state, ladder, chosen, retry_after, "rate limited").await;
+        }
+        Failure::Refused => park(state, ladder, chosen, None, "refused this router").await,
+        Failure::Unavailable => park(state, ladder, chosen, None, "no seller took the job").await,
+        Failure::Broke => {}
+    }
 }
 
 /// Takes a rate-limited rung out of service for a while.
