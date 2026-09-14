@@ -702,6 +702,14 @@ job_confirm_secs = 20
   [ladders.request_defaults]
   aspect_ratio = "1:1"
 
+  # Re-checked live on 2026-09-14. The two `veo3-1-*` rungs are gone: Veo
+  # renders 16:9 and 9:16 only and answers a square request with a 400, which
+  # the router now steps past, but a rung that declines every request this
+  # ladder makes is a round trip for nothing. `kling-o3-standard` and
+  # `wan-2-7` rendered a clip in one to two minutes; `seedance-2-0` was taken
+  # by a seller and then failed on the render; `venice-seedance-2-fast` was
+  # accepted and failed with `provider_unavailable` on every job.
+
   [[ladders.rungs]]
   provider = "surplus"
   model = "seedance-2-0-text-to-video"
@@ -710,21 +718,9 @@ job_confirm_secs = 20
 
   [[ladders.rungs]]
   provider = "surplus"
-  model = "veo3-1-full-text-to-video"
-  score_multiplier = 5.0
-  max_cost_per_unit = 0.30
-
-  [[ladders.rungs]]
-  provider = "surplus"
   model = "kling-o3-pro-text-to-video"
   score_multiplier = 4.5
   max_cost_per_unit = 0.25
-
-  [[ladders.rungs]]
-  provider = "surplus"
-  model = "veo3-1-fast-text-to-video"
-  score_multiplier = 3.0
-  max_cost_per_unit = 0.15
 
   [[ladders.rungs]]
   provider = "surplus"
@@ -744,7 +740,7 @@ job_confirm_secs = 20
   score_multiplier = 1.0
   max_cost_per_unit = 0.05
 
-  # Bounded by seedance-2-0-text-to-video's direct rate of a quarter a clip.
+  # The rung that actually rendered on 2026-09-14, uncapped as the last resort.
   [ladders.fallback]
   provider = "surplus"
-  model = "seedance-2-0-text-to-video"
+  model = "kling-o3-standard-text-to-video"
