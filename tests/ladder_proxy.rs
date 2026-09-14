@@ -1818,10 +1818,13 @@ async fn a_video_job_no_seller_takes_advances_the_ladder_and_parks_the_rung() {
 
     {
         let recorded = recorded.lock().unwrap();
+        // Submitted, watched, failed; submitted again one rung up, watched,
+        // taken. (The discount prefix differs because the ceiling is worked
+        // out against each rung's own price.)
         assert_eq!(
             recorded.paths,
             vec![
-                "/min55/v1/video/generations".to_string(),
+                "/v1/video/generations".to_string(),
                 "GET /v1/video/generations/job-venice-seedance-2-fast-t2v".to_string(),
                 "/min55/v1/video/generations".to_string(),
                 "GET /v1/video/generations/job-kling-o3-standard-text-to-video".to_string(),
