@@ -92,13 +92,25 @@ impl MarketOffer {
 }
 
 /// `GET /v1/buyer/me`.
+///
+/// Field names are the wire's, suffix and all.
 #[derive(Debug, Deserialize)]
+#[allow(clippy::struct_field_names)]
 struct BuyerProfile {
     /// Micro-USD, as a string.
     balance_usdc: Option<String>,
     /// Micro-USD, as a string. A spending allowance below the balance is the
     /// real limit.
     allowance_usdc: Option<String>,
+    /// Micro-USD, as a string: prepaid credit, spent before the wallet is.
+    ///
+    /// A top-up lands here, not in `balance_usdc`, and every media job on
+    /// 2026-09-14 was billed from it. A profile reading
+    /// `balance_usdc: "0", credit_balance_usdc: "18812853"` is a buyer with
+    /// nineteen dollars to spend, and a floor that reads only the wallet
+    /// turned that into "balance $0.00 is below the $0.50 floor" on every
+    /// rung while the marketplace would have served.
+    credit_balance_usdc: Option<String>,
 }
 
 /// Parses an order book into normalized offers.
@@ -145,7 +157,8 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
     Ok(ModelPrices::new(offers))
 }
 
-/// Parses a buyer profile into the spendable balance in USD.
+/// Parses a buyer profile into the spendable balance in USD: the wallet
+/// (or the allowance on it, whichever is less) plus any prepaid credit.
 ///
 /// # Errors
 ///
@@ -164,9 +177,16 @@ pub fn parse_balance(body: &[u8]) -> Result<f64> {
             .map(|amount| amount / MICRO_USD)
     };
 
-    // An allowance below the balance is what actually limits spending.
-    match (micro(profile.balance_usdc), micro(profile.allowance_usdc)) {
-        (Some(balance), Some(allowance)) => Ok(balance.min(allowance)),
+    // An allowance below the balance is what actually limits spending from
+    // the wallet; credit is spent regardless of the allowance.
+    let credit = micro(profile.credit_balance_usdc);
+    let wallet = match (micro(profile.balance_usdc), micro(profile.allowance_usdc)) {
+        (Some(balance), Some(allowance)) => Some(balance.min(allowance)),
+        (Some(only), None) | (None, Some(only)) => Some(only),
+        (None, None) => None,
+    };
+    match (wallet, credit) {
+        (Some(wallet), Some(credit)) => Ok(wallet + credit),
         (Some(only), None) | (None, Some(only)) => Ok(only),
         (None, None) => Err(Error::UnreadablePayload {
             provider: "surplus".to_string(),

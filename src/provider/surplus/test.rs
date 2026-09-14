@@ -110,6 +110,23 @@ fn the_spendable_balance_is_the_lesser_of_balance_and_allowance() {
 }
 
 #[test]
+fn prepaid_credit_counts_as_balance() {
+    // The live shape after a top-up on 2026-09-14: an empty wallet and
+    // nineteen dollars of credit, which the marketplace spends first.
+    let body = br#"{"balance_usdc":"0","allowance_usdc":"1.157920892373162e+77","credit_balance_usdc":"18812853"}"#;
+    let balance = parse_balance(body).unwrap();
+    assert!((balance - 18.812_853).abs() < 1e-6, "{balance}");
+    // Credit on top of a wallet, and credit alone.
+    assert!(
+        (parse_balance(br#"{"balance_usdc":"1000000","credit_balance_usdc":"500000"}"#).unwrap()
+            - 1.5)
+            .abs()
+            < 1e-9
+    );
+    assert!((parse_balance(br#"{"credit_balance_usdc":"500000"}"#).unwrap() - 0.5).abs() < 1e-9);
+}
+
+#[test]
 fn either_figure_alone_is_enough() {
     assert!((parse_balance(br#"{"balance_usdc":"1000000"}"#).unwrap() - 1.0).abs() < 1e-9);
     assert!((parse_balance(br#"{"allowance_usdc":"2000000"}"#).unwrap() - 2.0).abs() < 1e-9);
