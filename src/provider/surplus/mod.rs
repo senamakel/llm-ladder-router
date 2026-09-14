@@ -92,7 +92,10 @@ impl MarketOffer {
 }
 
 /// `GET /v1/buyer/me`.
+///
+/// Field names are the wire's, suffix and all.
 #[derive(Debug, Deserialize)]
+#[allow(clippy::struct_field_names)]
 struct BuyerProfile {
     /// Micro-USD, as a string.
     balance_usdc: Option<String>,

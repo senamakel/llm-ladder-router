@@ -64,7 +64,11 @@ slugs (`glm-5.2`). OpenAI-compatible.
 - `GET /v1/models` → catalogue with **reference** prices only (per token, string).
   Reference prices are not what a marketplace seller charges; use the order book.
 - `GET /v1/buyer/me` → `balance_usdc`, `allowance_usdc`, `credit_balance_usdc`,
-  plus `stats` and `recent_usage`. Spendable is `min(balance, allowance)`.
+  plus `stats` and `recent_usage`. Spendable is `min(balance, allowance)` plus
+  `credit_balance_usdc`: a top-up lands in credit, not the wallet, and credit
+  is spent first (every media job on 2026-09-14 was billed from it, and after
+  a top-up the profile read `balance_usdc: "0"` beside nineteen dollars of
+  credit).
 - `POST /v1/chat/completions`, and `POST /min{N}/v1/chat/completions` for
   minimum-discount routing.
 - `POST /v1/responses`, and `POST /min{N}/v1/responses`, serving the OpenAI
