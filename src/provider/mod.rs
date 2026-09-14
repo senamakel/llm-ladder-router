@@ -67,14 +67,14 @@ impl Client {
         }
     }
 
-    /// The configured name this provider is known by in ladders.
-    #[must_use]
     /// The provider's base URL, as configured, for recognising its own links.
     #[must_use]
     pub fn base_url(&self) -> &str {
         &self.provider.base_url
     }
 
+    /// The configured name this provider is known by in ladders.
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
