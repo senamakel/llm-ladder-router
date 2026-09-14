@@ -11,6 +11,7 @@
 //! its rung for a cooldown, because the upstream refusing on purpose is a fact
 //! about the next few seconds rather than about this one request.
 
+pub mod jobs;
 mod refresh;
 mod types;
 
@@ -97,6 +98,10 @@ pub fn build_with_credentials(
             config_sessions.max_entries,
         ))),
         cooldowns: Arc::new(RwLock::new(crate::cooldown::Cooldowns::new())),
+        jobs: Arc::new(RwLock::new(jobs::RecentJobs::new(
+            RECENT_JOB_TTL,
+            RECENT_JOB_CAP,
+        ))),
     };
 
     let app = axum::Router::new()
@@ -116,6 +121,10 @@ pub fn build_with_credentials(
             "/v1/video/generations/{id}",
             get(video_job_poll).delete(video_job_cancel),
         )
+        // A finished job names its clip at the marketplace's own artifact
+        // route, which the caller's router key cannot fetch; the router
+        // fetches it on their behalf, as it polls on their behalf.
+        .route("/v1/media/artifacts/{id}/{index}", get(video_artifact))
         .route("/v1/models", get(list_models))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(state.clone());
@@ -296,6 +305,25 @@ async fn video_job_cancel(
     relay_video_job(&state, &headers, reqwest::Method::DELETE, &id).await
 }
 
+/// Fetches one artifact of a finished video job.
+async fn video_artifact(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Path((id, index)): Path<(String, String)>,
+) -> Response {
+    if !is_job_id(&index) {
+        return problem(StatusCode::BAD_REQUEST, "malformed artifact index", &[]);
+    }
+    relay_video_path(
+        &state,
+        &headers,
+        reqwest::Method::GET,
+        &id,
+        &surplus::video_artifact_path(&id, &index),
+    )
+    .await
+}
+
 /// Relays a video job's poll or cancel to the provider that holds it.
 ///
 /// The router keeps no table of jobs. The marketplace owns the job and names
@@ -314,6 +342,19 @@ async fn relay_video_job(
     method: reqwest::Method,
     id: &str,
 ) -> Response {
+    relay_video_path(state, headers, method, id, &surplus::video_job_path(id)).await
+}
+
+/// Relays one bodiless request about a video job -- its poll, its cancel,
+/// or one of its artifacts -- to the provider that holds the job, and points
+/// every marketplace URL in the answer back at this router.
+async fn relay_video_path(
+    state: &State,
+    headers: &HeaderMap,
+    method: reqwest::Method,
+    id: &str,
+    path: &str,
+) -> Response {
     if !authorized(state, headers) {
         return problem(
             StatusCode::UNAUTHORIZED,
@@ -325,7 +366,7 @@ async fn relay_video_job(
         return problem(StatusCode::BAD_REQUEST, "malformed video job id", &[]);
     }
 
-    let path = surplus::video_job_path(id);
+    let origin = origin_of(headers);
     let mut asked = 0_usize;
     for client in state
         .clients
@@ -333,9 +374,13 @@ async fn relay_video_job(
         .filter(|client| client.serves(Wire::Video) && client.has_credential())
     {
         asked += 1;
-        match client.relay(method.clone(), &path).await {
+        match client.relay(method.clone(), path).await {
             Ok(dispatched) if dispatched.status == StatusCode::NOT_FOUND => {}
-            Ok(dispatched) => {
+            Ok(mut dispatched) => {
+                if method == reqwest::Method::GET && dispatched.status == StatusCode::OK {
+                    settle_job(state, id, &dispatched.body).await;
+                }
+                rewrite_job_urls(&mut dispatched, client.base_url(), origin.as_deref());
                 return relayed(&dispatched, |_| {
                     problem(
                         StatusCode::BAD_GATEWAY,
@@ -362,6 +407,134 @@ async fn relay_video_job(
         &format!("no provider knows video job {id}"),
         &[],
     )
+}
+
+/// Records which rung a video job went to, for [`settle_job`].
+async fn remember_job(state: &State, id: &str, ladder: &str, chosen: &Chosen) {
+    state.jobs.write().await.insert(
+        id,
+        jobs::JobOwner {
+            ladder: ladder.to_string(),
+            provider: chosen.provider.clone(),
+            model: chosen.model.clone(),
+        },
+    );
+}
+
+/// Reads a relayed poll for the job's fate, and parks the rung that
+/// submitted it when the marketplace reports it failed.
+///
+/// A job that fails after the confirmation window -- a seller took it and
+/// broke two minutes into the render -- cannot be walked past for the caller
+/// who submitted it; the job is theirs and the marketplace's. What can be
+/// done is for the next submission, theirs or anybody's, not to land on the
+/// same rung, which is what a cooldown is for. A finished job is forgotten
+/// either way.
+async fn settle_job(state: &State, id: &str, body: &[u8]) {
+    let Ok(job) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return;
+    };
+    match surplus::job_progress(&job) {
+        surplus::JobProgress::Waiting | surplus::JobProgress::Taken
+            if !surplus::job_is_finished(&job) => {}
+        progress => {
+            let owner = state.jobs.write().await.owner(id).cloned();
+            if let Some(owner) = owner {
+                state.jobs.write().await.forget(id);
+                if let surplus::JobProgress::Failed(detail) = progress {
+                    let cooled = state.config.rate_limits.cooldown_for(None);
+                    state.cooldowns.write().await.cool(
+                        &owner.provider,
+                        &owner.model,
+                        cooled.duration,
+                    );
+                    tracing::warn!(
+                        ladder = %owner.ladder,
+                        provider = %owner.provider,
+                        model = %owner.model,
+                        job = id,
+                        detail = %detail,
+                        cooldown_secs = cooled.duration.as_secs(),
+                        "video job failed after handover, rung parked"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Where the caller reached this router, as the scheme and host a URL back
+/// to it should carry: `X-Forwarded-Proto` and `Host` when a proxy set them,
+/// the bare `Host` otherwise, and nothing when even that is missing.
+fn origin_of(headers: &HeaderMap) -> Option<String> {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    if host.is_empty() {
+        return None;
+    }
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| *value == "https" || *value == "http")
+        .unwrap_or("http");
+    Some(format!("{scheme}://{host}"))
+}
+
+/// Points a job's marketplace URLs -- `poll_url`, `cancel_url` and every
+/// artifact `results[].url` -- at this router instead.
+///
+/// The marketplace writes its own host into the job, and a caller who follows
+/// one of those links arrives at Surplus carrying the router's key, which
+/// Surplus does not know. The paths are the same on both hosts, since the
+/// router relays them, so a URL that starts with the provider's base is
+/// rewritten to start with the router's origin. Anything else in the job is
+/// left exactly as it came.
+fn rewrite_job_urls(
+    dispatched: &mut crate::provider::Dispatched,
+    provider_base: &str,
+    origin: Option<&str>,
+) {
+    let Some(origin) = origin else { return };
+    let Ok(mut job) = serde_json::from_slice::<serde_json::Value>(&dispatched.body) else {
+        return;
+    };
+    if job.get("object").and_then(serde_json::Value::as_str) != Some("media.job") {
+        return;
+    }
+    let base = provider_base.trim_end_matches('/');
+    let mut changed = false;
+    let mut rewrite = |value: &mut serde_json::Value| {
+        if let Some(url) = value.as_str()
+            && let Some(path) = url.strip_prefix(base)
+            && path.starts_with('/')
+        {
+            *value = serde_json::Value::String(format!("{origin}{path}"));
+            changed = true;
+        }
+    };
+    if let Some(object) = job.as_object_mut() {
+        for key in ["poll_url", "cancel_url"] {
+            if let Some(value) = object.get_mut(key) {
+                rewrite(value);
+            }
+        }
+        if let Some(results) = object
+            .get_mut("results")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for result in results {
+                if let Some(value) = result.get_mut("url") {
+                    rewrite(value);
+                }
+            }
+        }
+    }
+    if changed && let Ok(body) = serde_json::to_vec(&job) {
+        dispatched.body = body;
+    }
 }
 
 /// Whether a caller-supplied job id is safe to place in an upstream path.
@@ -503,7 +676,17 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
     };
     let mut body = body;
     ladder_config.apply_request_defaults(&mut body);
-    walk(&state, ladder_config, &name, session, body, wire).await
+    let origin = origin_of(headers);
+    walk(
+        &state,
+        ladder_config,
+        &name,
+        session,
+        body,
+        wire,
+        origin.as_deref(),
+    )
+    .await
 }
 
 /// Walks a ladder, dispatching until a rung serves or the rungs run out.
@@ -514,7 +697,13 @@ async fn walk(
     session: Option<String>,
     body: serde_json::Value,
     wire: Wire,
+    origin: Option<&str>,
 ) -> Response {
+    let confirm = if wire == Wire::Video {
+        std::time::Duration::from_secs(ladder_config.job_confirm_secs)
+    } else {
+        std::time::Duration::ZERO
+    };
     let mut tried: Vec<usize> = Vec::new();
     let mut passed: Vec<Skipped> = Vec::new();
 
@@ -543,8 +732,11 @@ async fn walk(
             break;
         };
 
-        match dispatch(client, &chosen, wire, &body).await {
-            Attempt::Served(response) => {
+        match dispatch(client, &chosen, wire, &body, confirm, origin).await {
+            Attempt::Served(response, job_id) => {
+                if let Some(id) = job_id {
+                    remember_job(state, &id, name, &chosen).await;
+                }
                 tracing::info!(
                     ladder = %name,
                     rung = chosen.rung,
@@ -576,15 +768,7 @@ async fn walk(
                 );
             }
             Attempt::Advance { detail, kind } => {
-                match kind {
-                    Failure::RateLimited(retry_after) => {
-                        park(state, name, &chosen, retry_after, "rate limited").await;
-                    }
-                    Failure::Refused => {
-                        park(state, name, &chosen, None, "refused this router").await;
-                    }
-                    Failure::Broke => {}
-                }
+                park_for(state, name, &chosen, kind).await;
                 tracing::warn!(
                     ladder = %name,
                     rung = chosen.rung,
@@ -652,6 +836,19 @@ async fn choose(
     )
 }
 
+/// Parks a failed rung when its failure says the next request would fail too.
+async fn park_for(state: &State, ladder: &str, chosen: &Chosen, kind: Failure) {
+    match kind {
+        Failure::RateLimited(retry_after) => {
+            park(state, ladder, chosen, retry_after, "rate limited").await;
+        }
+        Failure::Refused => park(state, ladder, chosen, None, "refused this router").await,
+        Failure::Unavailable => park(state, ladder, chosen, None, "no seller took the job").await,
+        Failure::Delisted => park(state, ladder, chosen, None, "model not carried").await,
+        Failure::Broke => {}
+    }
+}
+
 /// Takes a rate-limited rung out of service for a while.
 ///
 /// A 429 is the upstream saying "not now", which is true of the next request
@@ -702,13 +899,21 @@ enum Failure {
     /// Nothing is asked of the upstream here — a refusal carries no
     /// `Retry-After` — so the configured default applies.
     Refused,
+    /// A video job the marketplace accepted and then could not place with any
+    /// seller. Parked like a refusal: the marketplace has just tried every
+    /// seller it has for that model and the next job would go the same way.
+    Unavailable,
+    /// A rung naming a model the marketplace says it does not carry. Parked
+    /// on the same argument: the listing will not be back by the next request.
+    Delisted,
     /// Anything else the upstream owns.
     Broke,
 }
 
 /// What one rung's dispatch produced.
 enum Attempt {
-    Served(Response),
+    /// The rung served; for a video submission, the id of the job it made.
+    Served(Response, Option<String>),
     /// The upstream failed on its own account, and whether it was refusing on
     /// purpose or simply broken.
     Advance {
@@ -723,8 +928,10 @@ async fn dispatch(
     chosen: &Chosen,
     wire: Wire,
     body: &serde_json::Value,
+    confirm: std::time::Duration,
+    origin: Option<&str>,
 ) -> Attempt {
-    let dispatched = match client.infer(chosen, wire, body).await {
+    let mut dispatched = match client.infer(chosen, wire, body).await {
         Ok(dispatched) => dispatched,
         // A transport failure is the upstream's, not the caller's.
         Err(error) => {
@@ -735,7 +942,25 @@ async fn dispatch(
         }
     };
 
-    let disposition = client.classify(&dispatched);
+    let mut disposition = client.classify(&dispatched);
+    if wire == Wire::Video && disposition == Disposition::Served {
+        match confirm_job(client, &dispatched, confirm).await {
+            Confirmed::Accepted(job) => dispatched = job,
+            Confirmed::Failed(detail) => {
+                return Attempt::Advance {
+                    detail,
+                    kind: Failure::Unavailable,
+                };
+            }
+        }
+        rewrite_job_urls(&mut dispatched, client.base_url(), origin);
+        disposition = Disposition::Served;
+    }
+    let job_id = if wire == Wire::Video && disposition == Disposition::Served {
+        job_id_of(&dispatched.body)
+    } else {
+        None
+    };
     let built = relayed(&dispatched, |_| {
         problem(
             StatusCode::BAD_GATEWAY,
@@ -745,7 +970,7 @@ async fn dispatch(
     });
 
     match disposition {
-        Disposition::Served => Attempt::Served(built),
+        Disposition::Served => Attempt::Served(built, job_id),
         Disposition::CallerError => Attempt::CallerError(built),
         Disposition::Advance => Attempt::Advance {
             detail: format!(
@@ -757,6 +982,11 @@ async fn dispatch(
                     .collect::<String>()
             ),
             kind: match dispatched.status {
+                StatusCode::BAD_REQUEST
+                    if surplus::is_delisted(&String::from_utf8_lossy(&dispatched.body)) =>
+                {
+                    Failure::Delisted
+                }
                 StatusCode::TOO_MANY_REQUESTS => Failure::RateLimited(dispatched.retry_after),
                 StatusCode::UNAUTHORIZED
                 | StatusCode::FORBIDDEN
@@ -764,6 +994,111 @@ async fn dispatch(
                 _ => Failure::Broke,
             },
         },
+    }
+}
+
+/// The id of the `media.job` in a body, when there is one worth relaying.
+fn job_id_of(body: &[u8]) -> Option<String> {
+    let job = serde_json::from_slice::<serde_json::Value>(body).ok()?;
+    if job.get("object").and_then(serde_json::Value::as_str) != Some("media.job") {
+        return None;
+    }
+    let id = job.get("id").and_then(serde_json::Value::as_str)?;
+    is_job_id(id).then(|| id.to_string())
+}
+
+/// What watching a freshly submitted video job decided.
+enum Confirmed {
+    /// The job as last seen: picked up by a seller, finished, or still queued
+    /// when the window ran out. Handed to the caller in place of the 202 body,
+    /// so the status they see is the latest one.
+    Accepted(crate::provider::Dispatched),
+    /// The marketplace failed the job on its own account.
+    Failed(String),
+}
+
+/// How long a submitted video job is remembered, which is about as long as a
+/// render can take before the marketplace itself expires it (its jobs carry a
+/// thirty-minute `expires_at`).
+const RECENT_JOB_TTL: std::time::Duration = std::time::Duration::from_secs(45 * 60);
+/// How many recent jobs are remembered at most.
+const RECENT_JOB_CAP: usize = 4_096;
+
+/// How often a submitted job is looked at inside the confirmation window.
+const JOB_CONFIRM_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Watches a just-submitted video job until the marketplace has either placed
+/// it with a seller or given up on it, or the window closes.
+///
+/// A `202` on submit means the job was queued, not that anybody will render
+/// it; the marketplace goes looking for a seller afterwards and reports
+/// `provider_unavailable` when it finds none. That is a rung failure by any
+/// other name, and this is where the ladder gets to treat it as one. The poll
+/// carries no body and no ceiling, and the job stays the marketplace's: the
+/// router still keeps no table.
+///
+/// The job is handed back unchanged when the window is zero, when the
+/// submission carried no id, or when a poll itself fails -- none of which is
+/// evidence against the rung.
+async fn confirm_job(
+    client: &Client,
+    submitted: &crate::provider::Dispatched,
+    window: std::time::Duration,
+) -> Confirmed {
+    if window.is_zero() {
+        return Confirmed::Accepted(submitted.clone());
+    }
+    let Some(id) = serde_json::from_slice::<serde_json::Value>(&submitted.body)
+        .ok()
+        .and_then(|job| {
+            job.get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+    else {
+        return Confirmed::Accepted(submitted.clone());
+    };
+    if !is_job_id(&id) {
+        return Confirmed::Accepted(submitted.clone());
+    }
+
+    let deadline = tokio::time::Instant::now() + window;
+    let path = surplus::video_job_path(&id);
+    let mut latest = submitted.clone();
+    loop {
+        let Ok(polled) = client.relay(reqwest::Method::GET, &path).await else {
+            return Confirmed::Accepted(latest);
+        };
+        if polled.status != StatusCode::OK {
+            return Confirmed::Accepted(latest);
+        }
+        let Ok(job) = serde_json::from_slice::<serde_json::Value>(&polled.body) else {
+            return Confirmed::Accepted(latest);
+        };
+        match surplus::job_progress(&job) {
+            surplus::JobProgress::Failed(detail) => {
+                return Confirmed::Failed(format!("job {id} {detail}"));
+            }
+            surplus::JobProgress::Taken => {
+                // The seller is the marketplace's choice and only known now.
+                latest = crate::provider::Dispatched {
+                    status: submitted.status,
+                    served_by: polled.served_by.clone().or(latest.served_by),
+                    ..polled
+                };
+                return Confirmed::Accepted(latest);
+            }
+            surplus::JobProgress::Waiting => {
+                latest = crate::provider::Dispatched {
+                    status: submitted.status,
+                    ..polled
+                };
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Confirmed::Accepted(latest);
+        }
+        tokio::time::sleep(JOB_CONFIRM_POLL).await;
     }
 }
 

@@ -530,3 +530,91 @@ fn the_embeddings_path_never_carries_a_discount_prefix() {
         "/v1/embeddings"
     );
 }
+
+#[test]
+fn a_rung_the_marketplace_no_longer_lists_or_that_refuses_the_frame_advances() {
+    // Both shapes as seen on 2026-09-14: a delisted image model, and a video
+    // model that renders only widescreen answering a square ladder. Neither
+    // is about the request, so neither should end the walk.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"type":"invalid_request_error","message":"venice-recraft-v4-pro is not a valid model ID. Unusual bug? Email support@surplusintelligence.ai"}}"#
+        ),
+        Disposition::Advance
+    );
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"type":"invalid_request_error","code":"invalid_request_error","message":"Unsupported aspect_ratio '1:1' for model 'veo3-1-fast-text-to-video'. Supported: 16:9, 9:16."}}"#
+        ),
+        Disposition::Advance
+    );
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"type":"invalid_request_error","code":"request_rejected","message":"The model 'gpt-5-image-mini' does not exist."}}"#
+        ),
+        Disposition::Advance
+    );
+    assert!(is_delisted("venice-recraft-v4-pro is not a valid model ID"));
+    assert!(!is_delisted("prompt must be shorter"));
+    // A 400 about the request itself still stops the walk.
+    assert_eq!(
+        classify(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"type":"invalid_request_error","message":"prompt must be shorter than or equal to 2000 characters."}}"#
+        ),
+        Disposition::CallerError
+    );
+}
+
+#[test]
+fn a_polled_job_is_read_for_whether_the_marketplace_placed_it() {
+    // The four live shapes, 2026-09-14.
+    let fresh = serde_json::json!({
+        "status": "queued", "served_by": "unknown", "provider_family": "unknown",
+        "marketplace_status": "unknown", "marketplace_attempts": 0
+    });
+    assert_eq!(job_progress(&fresh), JobProgress::Waiting);
+
+    let running = serde_json::json!({
+        "status": "running", "served_by": "api.venice.ai", "provider_family": "venice",
+        "marketplace_status": "submitted", "marketplace_attempts": 2
+    });
+    assert_eq!(job_progress(&running), JobProgress::Taken);
+    assert_eq!(
+        job_progress(&serde_json::json!({ "status": "succeeded" })),
+        JobProgress::Taken
+    );
+    // Queued but already assigned to a seller counts as taken.
+    assert_eq!(
+        job_progress(&serde_json::json!({ "status": "queued", "served_by": "api.venice.ai" })),
+        JobProgress::Taken
+    );
+
+    let unplaced = serde_json::json!({
+        "status": "failed", "served_by": "unknown", "marketplace_attempts": 1,
+        "error": { "type": "provider_unavailable", "message": "No provider could accept this job right now. Please retry." }
+    });
+    assert_eq!(
+        job_progress(&unplaced),
+        JobProgress::Failed(
+            "provider_unavailable: No provider could accept this job right now. Please retry."
+                .to_string()
+        )
+    );
+    let broke = serde_json::json!({ "status": "failed", "served_by": "api.venice.ai", "error": { "type": "provider_error" } });
+    assert_eq!(
+        job_progress(&broke),
+        JobProgress::Failed("provider_error: no detail".to_string())
+    );
+    assert_eq!(
+        job_progress(&serde_json::json!({ "status": "canceled" })),
+        JobProgress::Failed("canceled: no detail".to_string())
+    );
+    assert_eq!(
+        video_artifact_path("01JOB", "0"),
+        "/v1/media/artifacts/01JOB/0"
+    );
+}

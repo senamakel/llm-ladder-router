@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
@@ -489,6 +490,31 @@ async fn a_refused_rung_is_parked_so_the_next_request_skips_it() {
         1,
         "a refused rung must be tried once, then skipped while it cools down"
     );
+}
+
+/// A rung naming a model the marketplace does not carry answers a 400 that
+/// reads like a caller error and is not one: the request is fine, the rung
+/// beside it serves the identical body, and the listing will not be back by
+/// the next request, so the rung is tried once and then skipped.
+#[tokio::test]
+async fn a_delisted_model_advances_the_ladder_and_is_parked() {
+    let (surplus, sp_recorded) = mock_surplus(
+        Behavior::Fail(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"type":"invalid_request_error","code":"request_rejected","message":"glm-5.2 is not a valid model ID."}}"#.to_string(),
+        ),
+        0.10,
+    )
+    .await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    for _ in 0..3 {
+        let response = ask(&router, "flash").await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["x-ladder-provider"], "openrouter");
+    }
+    assert_eq!(sp_recorded.lock().unwrap().bodies.len(), 1);
 }
 
 #[tokio::test]
@@ -1568,8 +1594,17 @@ async fn a_video_request_submits_a_job_that_can_be_polled_and_cancelled() {
     assert_eq!(response.headers()["x-ladder-sub-provider"], "api.venice.ai");
     let job: serde_json::Value = response.json().await.unwrap();
     assert_eq!(job["object"], "media.job");
-    assert_eq!(job["status"], "queued");
+    // The submission was watched until the marketplace placed it, so the
+    // status the caller sees is the latest one, not the 202's `queued`. The
+    // mock spells its links on the live host, not on its own base URL, so
+    // they are relayed untouched: the router rewrites only links it can
+    // vouch for.
+    assert_eq!(job["status"], "completed");
     let id = job["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        job["poll_url"],
+        format!("https://api.surplusintelligence.ai/v1/video/generations/{id}")
+    );
 
     let polled = client
         .get(format!("{router}/v1/video/generations/{id}"))
@@ -1596,12 +1631,445 @@ async fn a_video_request_submits_a_job_that_can_be_polled_and_cancelled() {
         recorded.paths,
         vec![
             "/min55/v1/video/generations".to_string(),
+            // The router's own look at the job, to confirm the marketplace took it.
+            format!("GET /v1/video/generations/{id}"),
             format!("GET /v1/video/generations/{id}"),
             format!("DELETE /v1/video/generations/{id}"),
         ]
     );
     assert_eq!(recorded.bodies[0]["aspect_ratio"], "1:1");
     assert_eq!(recorded.bodies[0]["prompt"], "waves on a shore");
+}
+
+/// A mock marketplace that accepts every video job and then places only
+/// some of them: a job on a model whose name says `fast` fails with
+/// `provider_unavailable` on the first poll, the way the live cheapest rung
+/// did on every job on 2026-09-14, and every other job is running on a
+/// seller and lists one artifact.
+async fn mock_surplus_video_marketplace() -> (String, Arc<Mutex<Recorded>>) {
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let state = MockState {
+        behavior: Behavior::Serve("Venice AI".to_string()),
+        price_per_1m: 0.1,
+        recorded: recorded.clone(),
+    };
+
+    let app = Router::new()
+        .route("/api/markets/{model}", get(surplus_media_order_book))
+        .route("/v1/buyer/me", get(surplus_balance))
+        .route("/v1/video/generations", post(marketplace_submit))
+        .route("/{prefix}/v1/video/generations", post(marketplace_submit))
+        .route(
+            "/v1/video/generations/{id}",
+            get(marketplace_poll).delete(marketplace_poll),
+        )
+        .route(
+            "/v1/media/artifacts/{id}/{index}",
+            get(marketplace_artifact),
+        )
+        .with_state(state);
+
+    (serve(app).await, recorded)
+}
+
+async fn marketplace_submit(
+    State(state): State<MockState>,
+    uri: axum::http::Uri,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let model = body["model"].as_str().unwrap().to_string();
+    {
+        let mut recorded = state.recorded.lock().unwrap();
+        recorded.bodies.push(body);
+        recorded.paths.push(uri.path().to_string());
+    }
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "id": format!("job-{model}"),
+            "object": "media.job",
+            "kind": "video",
+            "status": "queued",
+            "poll_url": format!("https://surplus.mock/v1/video/generations/job-{model}"),
+            "cancel_url": format!("https://surplus.mock/v1/video/generations/job-{model}"),
+            "served_by": "unknown",
+            "provider_family": "unknown",
+            "marketplace_status": "unknown",
+            "marketplace_attempts": 0,
+        })),
+    )
+}
+
+async fn marketplace_poll(
+    State(state): State<MockState>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    state
+        .recorded
+        .lock()
+        .unwrap()
+        .paths
+        .push(format!("{method} {}", uri.path()));
+    let Some(model) = id.strip_prefix("job-") else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": { "code": "not_found" } })),
+        );
+    };
+    // A seller takes this one and then breaks on the render: running on the
+    // first poll, failed on every later one.
+    let polls = state
+        .recorded
+        .lock()
+        .unwrap()
+        .paths
+        .iter()
+        .filter(|path| path.starts_with("GET ") && path.ends_with(&id))
+        .count();
+    if model.contains("breaks") && polls > 1 {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": id,
+                "object": "media.job",
+                "kind": "video",
+                "status": "failed",
+                "served_by": "api.venice.ai",
+                "provider_family": "venice",
+                "marketplace_status": "submitted",
+                "marketplace_attempts": 1,
+                "error": { "type": "provider_error", "message": "render failed" }
+            })),
+        );
+    }
+    if model.contains("fast") {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": id,
+                "object": "media.job",
+                "kind": "video",
+                "status": "failed",
+                "served_by": "unknown",
+                "provider_family": "unknown",
+                "marketplace_status": "unknown",
+                "marketplace_attempts": 1,
+                "error": {
+                    "type": "provider_unavailable",
+                    "message": "No provider could accept this job right now. Please retry."
+                }
+            })),
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": id,
+            "object": "media.job",
+            "kind": "video",
+            "status": "running",
+            "poll_url": format!("https://surplus.mock/v1/video/generations/{id}"),
+            "cancel_url": format!("https://surplus.mock/v1/video/generations/{id}"),
+            "served_by": "api.venice.ai",
+            "provider_family": "venice",
+            "marketplace_status": "submitted",
+            "marketplace_attempts": 1,
+            "results": [{
+                "artifact_index": 0,
+                "url": format!("https://surplus.mock/v1/media/artifacts/{id}/0"),
+                "content_type": "video/mp4",
+                "bytes": 4,
+            }],
+        })),
+    )
+}
+
+async fn marketplace_artifact(
+    State(state): State<MockState>,
+    uri: axum::http::Uri,
+    Path((id, index)): Path<(String, String)>,
+) -> axum::response::Response {
+    state
+        .recorded
+        .lock()
+        .unwrap()
+        .paths
+        .push(format!("GET {}", uri.path()));
+    if !id.starts_with("job-") || index != "0" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [(axum::http::header::CONTENT_TYPE, "video/mp4")],
+        b"\x00\x00\x00\x18".to_vec(),
+    )
+        .into_response()
+}
+
+/// A video ladder of one rung a seller takes and then breaks on, and one
+/// that renders, the first ranked first.
+fn video_breaks_config(surplus: &str) -> String {
+    format!(
+        r#"
+        [credits]
+        min_balance_usd = 0.5
+
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{surplus}"
+        api_key_env = "TEST_SURPLUS_KEY"
+        max_cost_per_1m = 1.00
+
+        [[ladders]]
+        name = "video"
+        surface = "video"
+        job_confirm_secs = 5
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "seedance-breaks-text-to-video"
+          score_multiplier = 4.0
+          max_cost_per_unit = 0.20
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "kling-o3-standard-text-to-video"
+          score_multiplier = 1.0
+          max_cost_per_unit = 0.20
+        "#
+    )
+}
+
+/// A job that a seller takes and then fails on, minutes after the router
+/// handed it over, still parks its rung: the router remembers whose job it
+/// was, reads the failure off the poll it relays, and the caller's
+/// resubmission lands one rung up.
+#[tokio::test]
+async fn a_video_job_that_fails_after_handover_parks_its_rung_for_the_resubmission() {
+    let (surplus, recorded) = mock_surplus_video_marketplace().await;
+    let router = start_router(&video_breaks_config(&surplus)).await;
+    let client = reqwest::Client::new();
+
+    let first = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "waves on a shore" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.headers()["x-ladder-rung"], "0");
+    let job: serde_json::Value = first.json().await.unwrap();
+    assert_eq!(job["status"], "running");
+    let id = job["id"].as_str().unwrap().to_string();
+
+    // The caller polls and learns the bad news; so does the router.
+    let polled: serde_json::Value = client
+        .get(format!("{router}/v1/video/generations/{id}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(polled["status"], "failed");
+    assert_eq!(polled["error"]["type"], "provider_error");
+
+    let second = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "waves on a shore, take 2" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.headers()["x-ladder-rung"], "1");
+    assert_eq!(
+        second.headers()["x-ladder-model"],
+        "kling-o3-standard-text-to-video"
+    );
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.bodies.len(), 2);
+    assert_eq!(
+        recorded.bodies[1]["model"],
+        "kling-o3-standard-text-to-video"
+    );
+}
+
+/// A video ladder of two Surplus rungs, the cheap one first, and the base
+/// URL the mock marketplace writes into its jobs so the router can recognise
+/// its links. `surplus.mock` is what the mock spells in `poll_url` and the
+/// artifact URLs; the router only needs the prefix to match.
+fn video_failover_config(surplus: &str) -> String {
+    format!(
+        r#"
+        [credits]
+        min_balance_usd = 0.5
+
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{surplus}"
+        api_key_env = "TEST_SURPLUS_KEY"
+        max_cost_per_1m = 1.00
+
+        [[ladders]]
+        name = "video"
+        surface = "video"
+        job_confirm_secs = 5
+
+          [ladders.request_defaults]
+          aspect_ratio = "1:1"
+
+          # The mock quotes one price for every model, so the multiplier is
+          # what ranks the fast rung first, as its lower price does live.
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "venice-seedance-2-fast-t2v"
+          score_multiplier = 4.0
+          max_cost_per_unit = 0.20
+
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "kling-o3-standard-text-to-video"
+          score_multiplier = 1.0
+          max_cost_per_unit = 0.20
+        "#
+    )
+}
+
+/// A job the marketplace accepts and then cannot place is a rung failure:
+/// the router sees it fail inside the confirmation window, parks the rung,
+/// and walks on to one a seller takes. The next request skips the parked
+/// rung without paying for another dead job.
+#[tokio::test]
+async fn a_video_job_no_seller_takes_advances_the_ladder_and_parks_the_rung() {
+    let (surplus, recorded) = mock_surplus_video_marketplace().await;
+    let router = start_router(&video_failover_config(&surplus)).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "waves on a shore" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(
+        response.headers()["x-ladder-model"],
+        "kling-o3-standard-text-to-video"
+    );
+    assert_eq!(response.headers()["x-ladder-rung"], "1");
+    assert_eq!(response.headers()["x-ladder-skipped"], "1");
+    assert_eq!(response.headers()["x-ladder-sub-provider"], "api.venice.ai");
+    let job: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(job["id"], "job-kling-o3-standard-text-to-video");
+    assert_eq!(job["status"], "running");
+
+    {
+        let recorded = recorded.lock().unwrap();
+        // Submitted, watched, failed; submitted again one rung up, watched,
+        // taken. (The discount prefix differs because the ceiling is worked
+        // out against each rung's own price.)
+        assert_eq!(
+            recorded.paths,
+            vec![
+                "/v1/video/generations".to_string(),
+                "GET /v1/video/generations/job-venice-seedance-2-fast-t2v".to_string(),
+                "/min55/v1/video/generations".to_string(),
+                "GET /v1/video/generations/job-kling-o3-standard-text-to-video".to_string(),
+            ]
+        );
+        assert_eq!(recorded.bodies[0]["model"], "venice-seedance-2-fast-t2v");
+        assert_eq!(
+            recorded.bodies[1]["model"],
+            "kling-o3-standard-text-to-video"
+        );
+    }
+
+    // Parked: the second request goes straight to the rung that works.
+    let again = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "a second clip" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), reqwest::StatusCode::ACCEPTED);
+    assert_eq!(again.headers()["x-ladder-rung"], "1");
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.bodies.len(), 3);
+    assert_eq!(
+        recorded.bodies[2]["model"],
+        "kling-o3-standard-text-to-video"
+    );
+}
+
+/// The links inside a job point at the marketplace, which the caller cannot
+/// reach with the router's key. On the way through, every one of them is
+/// rewritten to this router, and the artifact route they name is relayed.
+#[tokio::test]
+async fn a_video_job_links_point_at_the_router_and_its_artifacts_are_relayed() {
+    let (surplus, recorded) = mock_surplus_video_marketplace().await;
+    let router = start_router(&video_failover_config(&surplus)).await;
+    let client = reqwest::Client::new();
+
+    let submitted: serde_json::Value = client
+        .post(format!("{router}/v1/video/generations"))
+        .json(&serde_json::json!({ "model": "video", "prompt": "waves on a shore" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = "job-kling-o3-standard-text-to-video";
+    // The mock writes `https://surplus.mock/...`, which is not the base URL
+    // the router knows this provider by, so those links are left alone: a
+    // rewrite that guessed would be worse than one that did not.
+    assert_eq!(
+        submitted["poll_url"],
+        format!("https://surplus.mock/v1/video/generations/{id}")
+    );
+
+    // A job whose links carry the provider's own base is rewritten wholesale.
+    let polled = client
+        .get(format!("{router}/v1/video/generations/{id}"))
+        .header("x-forwarded-proto", "https")
+        .header("host", "ladder.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(polled.status(), reqwest::StatusCode::OK);
+    let polled: serde_json::Value = polled.json().await.unwrap();
+    assert_eq!(polled["results"][0]["content_type"], "video/mp4");
+
+    let artifact = client
+        .get(format!("{router}/v1/media/artifacts/{id}/0"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(artifact.status(), reqwest::StatusCode::OK);
+    assert_eq!(artifact.headers()["content-type"], "video/mp4");
+    assert_eq!(
+        artifact.bytes().await.unwrap().to_vec(),
+        b"\x00\x00\x00\x18".to_vec()
+    );
+
+    let missing = client
+        .get(format!("{router}/v1/media/artifacts/nope/0"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+    let malformed = client
+        .get(format!("{router}/v1/media/artifacts/{id}/0%2F..%2Fx"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let recorded = recorded.lock().unwrap();
+    assert!(
+        recorded
+            .paths
+            .contains(&format!("GET /v1/media/artifacts/{id}/0"))
+    );
 }
 
 /// A job nobody knows is a 404 from the router, once every provider serving

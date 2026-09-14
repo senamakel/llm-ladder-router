@@ -1164,6 +1164,33 @@ fn a_per_unit_ceiling_is_refused_where_a_per_token_one_would_be() {
     );
 }
 
+/// A video ladder watches its submissions for twenty seconds unless told
+/// otherwise, and zero switches the watch off.
+#[test]
+fn a_video_ladder_confirms_its_jobs_for_twenty_seconds_by_default() {
+    let config = Config::parse(&format!(
+        r#"
+        {MEDIA_PROVIDER}
+        [[ladders]]
+        name = "video"
+        surface = "video"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "kling-o3-standard-text-to-video"
+        [[ladders]]
+        name = "impatient"
+        surface = "video"
+        job_confirm_secs = 0
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "kling-o3-standard-text-to-video"
+        "#
+    ))
+    .unwrap();
+    assert_eq!(config.ladder("video").unwrap().job_confirm_secs, 20);
+    assert_eq!(config.ladder("impatient").unwrap().job_confirm_secs, 0);
+}
+
 /// `request_defaults` fills in what the caller left out and nothing else: a
 /// field the caller sent keeps its value, whatever the ladder would have
 /// preferred, and every TOML type comes through as its JSON counterpart.

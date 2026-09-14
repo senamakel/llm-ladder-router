@@ -69,7 +69,7 @@ impl Wire {
 }
 
 /// What a dispatched rung produced.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Dispatched {
     /// The upstream status code.
     pub status: reqwest::StatusCode,

@@ -277,6 +277,106 @@ pub fn video_job_path(id: &str) -> String {
     format!("{VIDEO_PATH}/{id}")
 }
 
+/// Whether a 400 body is the marketplace saying it does not carry the model
+/// the rung named, in either of the spellings seen on 2026-09-14:
+/// `venice-recraft-v4-pro is not a valid model ID` for a model still in
+/// `/v1/models`, and `The model 'gpt-5-image-mini' does not exist` for one
+/// that is not. Neither is going to change by the next request, so a rung
+/// that says it is parked rather than merely stepped past.
+#[must_use]
+pub fn is_delisted(body: &str) -> bool {
+    body.contains("is not a valid model ID") || body.contains("does not exist")
+}
+
+/// The path one artifact of a finished video job is fetched from.
+///
+/// A finished job lists its outputs under `results[].url`, each spelled
+/// `/v1/media/artifacts/{job}/{index}` on the marketplace's own host, with a
+/// `content_type` beside it. Measured 2026-09-14 on a `kling-o3-standard`
+/// job: one `video/mp4` artifact of about two megabytes at index 0.
+#[must_use]
+pub fn video_artifact_path(id: &str, index: &str) -> String {
+    format!("/v1/media/artifacts/{id}/{index}")
+}
+
+/// Where a submitted video job has got to, as far as failover is concerned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobProgress {
+    /// A seller has taken it, or it is already done. Nothing more for the
+    /// ladder to decide.
+    Taken,
+    /// Still waiting for the marketplace to place it.
+    Waiting,
+    /// The marketplace gave up on it, for the reason given.
+    Failed(String),
+}
+
+/// Reads a polled `media.job` for whether the marketplace has placed it.
+///
+/// The live shapes, 2026-09-14: a fresh job is `queued` with `served_by`,
+/// `provider_family` and `marketplace_status` all `"unknown"` and
+/// `marketplace_attempts` at 0; one a seller took reads `running` with
+/// `served_by = "api.venice.ai"` and `marketplace_status = "submitted"`; one
+/// no seller would take reads `failed` with `error.type =
+/// "provider_unavailable"`, still `unknown` everywhere else, after one
+/// attempt; and one a seller took and then broke reads `failed` with
+/// `error.type = "provider_error"`. Only the failed-before-placement case is
+/// a fact about the rung, but a seller that breaks on the render is not the
+/// caller's fault either, and the walk is the only thing that can serve the
+/// prompt, so every failure the marketplace reports is one to step past.
+#[must_use]
+pub fn job_progress(job: &serde_json::Value) -> JobProgress {
+    let status = job
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("queued")
+        .to_ascii_lowercase();
+    match status.as_str() {
+        "failed" | "error" | "canceled" | "cancelled" | "expired" | "rejected" => {
+            let error = job.get("error");
+            let kind = error
+                .and_then(|error| error.get("type"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&status);
+            let message = error
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("no detail");
+            JobProgress::Failed(format!(
+                "{kind}: {}",
+                message.chars().take(200).collect::<String>()
+            ))
+        }
+        "queued" | "pending" | "submitted" | "accepted" => {
+            let known = |key: &str| {
+                job.get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| !value.is_empty() && value != "unknown")
+            };
+            if known("served_by") || known("provider_family") {
+                JobProgress::Taken
+            } else {
+                JobProgress::Waiting
+            }
+        }
+        _ => JobProgress::Taken,
+    }
+}
+
+/// Whether a polled job is over, for better or worse.
+#[must_use]
+pub fn job_is_finished(job: &serde_json::Value) -> bool {
+    let status = job
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("queued")
+        .to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "succeeded" | "success" | "completed" | "done" | "finished" | "ready"
+    ) || matches!(job_progress(job), JobProgress::Failed(_))
+}
+
 /// Applies a chosen rung to an outgoing request body.
 ///
 /// The model is rewritten - the ceiling travels in the path, not the body -
@@ -398,6 +498,26 @@ pub fn classify(status: reqwest::StatusCode, body: &[u8]) -> Disposition {
     // checkpoint that happened to land on one of them fell back to a generic
     // subject. The rungs on either side would have answered.
     if status == reqwest::StatusCode::BAD_REQUEST && text.contains("Reasoning is mandatory") {
+        return Disposition::Advance;
+    }
+
+    // A rung naming a model the marketplace no longer lists, or a media
+    // model refusing a frame it does not render. Both are facts about the
+    // rung -- the request is fine and the rung beside it serves the identical
+    // body -- and both arrive as a 400 that would otherwise end the walk.
+    //
+    //   400 {"error":{"type":"invalid_request_error",
+    //        "message":"venice-recraft-v4-pro is not a valid model ID. ..."}}
+    //   400 {"error":{"type":"invalid_request_error",
+    //        "message":"Unsupported aspect_ratio '1:1' for model
+    //                   'veo3-1-fast-text-to-video'. Supported: 16:9, 9:16. ..."}}
+    //
+    // Both seen on 2026-09-14: the first stopped every `image` request for
+    // the morning once the two rungs above it were out of sellers, and the
+    // second is what a square video ladder gets from every 16:9-only rung.
+    if status == reqwest::StatusCode::BAD_REQUEST
+        && (is_delisted(&text) || text.contains("Unsupported aspect_ratio"))
+    {
         return Disposition::Advance;
     }
 
