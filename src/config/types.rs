@@ -502,6 +502,23 @@ pub struct Ladder {
     /// of it, but nothing restricts it to those fields or those surfaces.
     #[serde(default)]
     pub request_defaults: BTreeMap<String, toml::Value>,
+    /// How long, in seconds, a video submission is watched before its job is
+    /// handed to the caller, so a marketplace that accepts the job and then
+    /// fails it seconds later still gets the ladder walked.
+    ///
+    /// A video job is accepted with a 202 before any seller has looked at it,
+    /// and the marketplace may then fail it with `provider_unavailable` ten
+    /// seconds on -- which is what the cheapest rung did on every job on
+    /// 2026-09-14 while the rung beside it rendered fine. Without this the
+    /// router's failover ends at the 202 and the caller is left polling a
+    /// job that was dead on arrival. Within the window the job is polled
+    /// every couple of seconds; one that fails on the marketplace's account
+    /// parks the rung and the walk continues, one that a seller has picked
+    /// up is handed over at once, and one still queued when the window ends
+    /// is handed over as it is. Zero turns the watch off. Ignored on any
+    /// surface but video.
+    #[serde(default = "default_job_confirm_secs")]
+    pub job_confirm_secs: u64,
     /// The rungs, tried first to last.
     pub rungs: Vec<Rung>,
     /// An uncapped rung attempted only after every normal rung is unavailable
@@ -511,6 +528,10 @@ pub struct Ladder {
     /// provider ceiling, but it remains subject to credential, balance,
     /// cooldown, and wire-format availability checks.
     pub fallback: Option<Rung>,
+}
+
+fn default_job_confirm_secs() -> u64 {
+    20
 }
 
 impl Ladder {
