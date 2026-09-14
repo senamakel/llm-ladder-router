@@ -409,6 +409,18 @@ async fn relay_video_path(
     )
 }
 
+/// Records which rung a video job went to, for [`settle_job`].
+async fn remember_job(state: &State, id: &str, ladder: &str, chosen: &Chosen) {
+    state.jobs.write().await.insert(
+        id,
+        jobs::JobOwner {
+            ladder: ladder.to_string(),
+            provider: chosen.provider.clone(),
+            model: chosen.model.clone(),
+        },
+    );
+}
+
 /// Reads a relayed poll for the job's fate, and parks the rung that
 /// submitted it when the marketplace reports it failed.
 ///
@@ -723,14 +735,7 @@ async fn walk(
         match dispatch(client, &chosen, wire, &body, confirm, origin).await {
             Attempt::Served(response, job_id) => {
                 if let Some(id) = job_id {
-                    state.jobs.write().await.insert(
-                        &id,
-                        jobs::JobOwner {
-                            ladder: name.to_string(),
-                            provider: chosen.provider.clone(),
-                            model: chosen.model.clone(),
-                        },
-                    );
+                    remember_job(state, &id, name, &chosen).await;
                 }
                 tracing::info!(
                     ladder = %name,
