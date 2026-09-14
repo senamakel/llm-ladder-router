@@ -492,6 +492,31 @@ async fn a_refused_rung_is_parked_so_the_next_request_skips_it() {
     );
 }
 
+/// A rung naming a model the marketplace does not carry answers a 400 that
+/// reads like a caller error and is not one: the request is fine, the rung
+/// beside it serves the identical body, and the listing will not be back by
+/// the next request, so the rung is tried once and then skipped.
+#[tokio::test]
+async fn a_delisted_model_advances_the_ladder_and_is_parked() {
+    let (surplus, sp_recorded) = mock_surplus(
+        Behavior::Fail(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"type":"invalid_request_error","code":"request_rejected","message":"glm-5.2 is not a valid model ID."}}"#.to_string(),
+        ),
+        0.10,
+    )
+    .await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    for _ in 0..3 {
+        let response = ask(&router, "flash").await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["x-ladder-provider"], "openrouter");
+    }
+    assert_eq!(sp_recorded.lock().unwrap().bodies.len(), 1);
+}
+
 #[tokio::test]
 async fn a_surplus_ceiling_travels_as_a_discount_prefix_in_the_path() {
     let (surplus, sp_recorded) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
