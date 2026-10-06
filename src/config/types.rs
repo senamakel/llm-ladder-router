@@ -30,6 +30,10 @@ pub struct Config {
     /// How a rate-limited rung is taken out of service and put back.
     #[serde(default)]
     pub rate_limits: RateLimits,
+    /// How a request's caller identities are recognised, for counting how many
+    /// one request carries. Off unless a prefix is set.
+    #[serde(default)]
+    pub markers: crate::markers::Markers,
     /// The ladders, in no particular order; requests select one by name.
     pub ladders: Vec<Ladder>,
 }

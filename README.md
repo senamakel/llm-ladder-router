@@ -457,6 +457,35 @@ one vocabulary and accepts steering in another — `OpenRouter` reports
 `DigitalOcean` but routes on `digitalocean`, and a quantized endpoint answers to
 `deepinfra/fp8`. The router resolves one to the other, so a pin actually lands.
 
+## Counting callers per request
+
+One router usually fronts several callers, and an upstream request is expected
+to belong to exactly one of them. Whether that holds is decided by whatever
+builds the request — often an application the operator does not control — and a
+router that forwards bodies cannot normally tell. Batching is the usual way it
+stops holding: a client that groups several callers' texts into one embeddings
+`input` array sends them to the marketplace in a single call.
+
+Give the router the prefix your caller identities share and it reports how many
+**distinct** ones each request carries. One is the ordinary case; more than one
+means a single upstream call mixed several callers, which is worth knowing.
+
+```toml
+[markers]
+prefix = "acct-"       # tokens starting with this are caller identities
+warn_above = 1         # warn when one request carries more than this
+scan_cap = 16          # stop counting a body past this many
+```
+
+Every request logs `markers=<n>`, and one above `warn_above` logs a warning
+naming the ladder and the count. A run of `markers=0` means the caller stopped
+labelling its requests, which is a different problem from the feature being off.
+
+**Only the number is recorded.** The matched tokens are never logged, returned
+or stored, and neither is any part of the body — an operator investigating a
+mixed request gets a count and somewhere to look, not a copy of the content.
+Counting is off entirely unless `prefix` is set, and no body is scanned then.
+
 ## Direct providers
 
 Not every model is resold. `kind = "mistral"` reaches Mistral's own API, where
