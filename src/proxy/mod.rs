@@ -617,6 +617,25 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
     };
     let name = name.to_string();
 
+    // How many distinct caller identities this one request carries. Counted
+    // once, before dispatch, so a body that mixes callers is visible even if
+    // every rung then fails. Only the number is recorded -- never the markers
+    // themselves and never any part of the body.
+    if let Some(found) = crate::markers::count(&body, &state.config.markers) {
+        if state.config.markers.should_warn(found) {
+            tracing::warn!(
+                ladder = %name,
+                markers = found,
+                "request carries more than one caller identity"
+            );
+        } else {
+            // Every count, not only the ones that warn: the distribution is
+            // what tells an operator whether mixing is rare or routine, and a
+            // run of zeros is how a caller that stopped labelling shows up.
+            tracing::info!(ladder = %name, markers = found, "request markers counted");
+        }
+    }
+
     let Some(ladder_config) = state.config.ladder(&name) else {
         // Aliases are listed beside the names, because a caller reading this
         // wants every spelling that would have worked, not only the canonical

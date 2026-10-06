@@ -65,6 +65,7 @@ pub mod cooldown;
 pub mod credits;
 pub mod error;
 pub mod ladder;
+pub mod markers;
 pub mod pricing;
 pub mod provider;
 pub mod proxy;
