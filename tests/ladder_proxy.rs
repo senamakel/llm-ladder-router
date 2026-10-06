@@ -320,7 +320,10 @@ async fn serves_from_the_first_rung_and_says_which_one_it_used() {
     assert_eq!(headers["x-ladder-skipped"], "0");
 
     // The backstop must not have been touched.
-    assert!(or_recorded.lock().unwrap().bodies.is_empty());
+    assert_eq!(
+        or_recorded.lock().unwrap().bodies,
+        [] as [serde_json::Value; 0]
+    );
 }
 
 #[tokio::test]
@@ -1171,7 +1174,10 @@ async fn a_ladder_declared_for_one_surface_refuses_the_other() {
     assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
 
     // Neither reached an upstream.
-    assert!(recorded.lock().unwrap().paths.is_empty());
+    assert_eq!(
+        recorded.lock().unwrap().paths,
+        [] as [std::string::String; 0]
+    );
 }
 
 /// One provider, two ladders: the embeddings one and a chat one to mismatch it
@@ -1510,7 +1516,10 @@ async fn an_images_request_reaches_the_images_endpoint_square_by_default() {
     assert_eq!(recorded.bodies[0]["prompt"], "a lighthouse at dusk");
     assert_eq!(recorded.bodies[0]["size"], "1024x1024");
     // `OpenRouter` was never asked: it does not serve the surface.
-    assert!(or_recorded.lock().unwrap().paths.is_empty());
+    assert_eq!(
+        or_recorded.lock().unwrap().paths,
+        [] as [std::string::String; 0]
+    );
 }
 
 /// A default is not an override.
@@ -1564,7 +1573,10 @@ async fn an_images_rung_priced_above_its_per_unit_ceiling_is_skipped() {
             .any(|reason| reason.contains("$0.02/unit") && reason.contains("$0.05/unit")),
         "{reasons:?}"
     );
-    assert!(recorded.lock().unwrap().paths.is_empty());
+    assert_eq!(
+        recorded.lock().unwrap().paths,
+        [] as [std::string::String; 0]
+    );
 }
 
 /// A video request is a job: the submission is routed through the ladder and
@@ -2136,7 +2148,10 @@ async fn a_media_ladder_refuses_the_other_surfaces() {
             "{path} {ladder}"
         );
     }
-    assert!(recorded.lock().unwrap().paths.is_empty());
+    assert_eq!(
+        recorded.lock().unwrap().paths,
+        [] as [std::string::String; 0]
+    );
 }
 
 /// Media requests carry no conversation, so nothing is pinned: the `user`

@@ -766,7 +766,7 @@ fn a_pinned_session_stays_on_its_rung_even_when_a_better_one_is_free() {
     assert!(selection.pinned);
     assert_eq!(selection.pin_rejected, None);
     // Rungs above the pin are not "skipped" — they were never considered.
-    assert!(selection.skipped.is_empty());
+    assert_eq!(selection.skipped, [] as [crate::ladder::types::Skipped; 0]);
 }
 
 #[test]
