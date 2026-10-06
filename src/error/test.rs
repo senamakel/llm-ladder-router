@@ -69,7 +69,7 @@ fn wraps_a_toml_failure() {
 #[test]
 fn is_a_standard_error() {
     fn assert_error(error: &dyn std::error::Error) {
-        assert!(!error.to_string().is_empty());
+        assert_ne!(error.to_string(), "");
     }
     assert_error(&Error::UnknownLadder("nope".to_string()));
 }
