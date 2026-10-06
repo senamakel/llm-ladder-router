@@ -1,3 +1,9 @@
+//! Unit tests for marker counting.
+
+// As in every other test module here: panicking helpers are the clearest way
+// to assert in a test, and a failure is the point.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use super::*;
 use serde_json::json;
 
@@ -125,4 +131,60 @@ fn a_repeated_prefix_cannot_spin() {
     // Regression guard: the scan must advance past a rejected bare prefix.
     let body = json!({"content": "acct-acct-acct-"});
     assert!(count(&body, &markers("acct-")).is_some());
+}
+
+// -- configuration ----------------------------------------------------------
+//
+// The serde defaults are reached only by deserialization, so constructing a
+// `Markers` in a test never exercises them. These do.
+
+#[test]
+fn a_prefix_alone_takes_the_documented_defaults() {
+    let parsed: Markers = toml::from_str(r#"prefix = "acct-""#).unwrap();
+    assert_eq!(parsed.prefix.as_deref(), Some("acct-"));
+    assert_eq!(parsed.warn_above, 1, "one request, one caller is the norm");
+    assert_eq!(parsed.scan_cap, 16);
+}
+
+#[test]
+fn explicit_values_override_the_defaults() {
+    let parsed: Markers =
+        toml::from_str("prefix = \"acct-\"\nwarn_above = 3\nscan_cap = 2").unwrap();
+    assert_eq!(parsed.warn_above, 3);
+    assert_eq!(parsed.scan_cap, 2);
+    assert!(!parsed.should_warn(3));
+    assert!(parsed.should_warn(4));
+}
+
+#[test]
+fn an_empty_section_leaves_counting_off() {
+    let parsed: Markers = toml::from_str("").unwrap();
+    assert_eq!(parsed.prefix, None);
+    assert_eq!(count(&json!({"content": "acct-alice"}), &parsed), None);
+}
+
+#[test]
+fn an_unknown_key_is_refused_rather_than_ignored() {
+    // A typo in an operator's config must not silently leave counting
+    // misconfigured while appearing to be set.
+    let parsed: Result<Markers, _> = toml::from_str(
+        r#"prefix = "acct-"
+            warn_abov = 2"#,
+    );
+    assert!(parsed.is_err());
+}
+
+/// `Markers::default()` comes from `derive(Default)`, so its numbers are 0 and
+/// not the serde defaults above. That is only ever reached when the `[markers]`
+/// section is absent entirely, where `prefix` is `None` and counting is off, so
+/// the numbers cannot matter -- but the difference is surprising enough to pin.
+#[test]
+fn the_derived_default_is_inert_rather_than_the_serde_default() {
+    let d = Markers::default();
+    assert_eq!(d.prefix, None);
+    assert_eq!(d.warn_above, 0);
+    assert_eq!(d.scan_cap, 0);
+    // Counting is off, so neither number is consulted.
+    assert_eq!(count(&json!({"content": "acct-alice"}), &d), None);
+    assert!(!d.should_warn(99));
 }
