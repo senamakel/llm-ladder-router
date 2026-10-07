@@ -503,3 +503,75 @@ async fn a_ladder_whose_only_rung_fails_explains_itself() {
         "{skipped:?}"
     );
 }
+
+/// A router that refuses one system prompt, for the refusal tests below.
+fn refusing_state() -> State {
+    state_with(
+        "bind = \"127.0.0.1:6969\"\n\n[refuse]\nsystem_prefixes = [\"You are a synthesis engine\"]",
+    )
+}
+
+#[tokio::test]
+async fn a_refused_system_prompt_never_reaches_a_rung() {
+    let state = refusing_state();
+    refresh_credits_once(&state).await;
+
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash", "messages": [
+            { "role": "system", "content": "You are a synthesis engine. Given a group..." },
+            { "role": "user", "content": "the private text" }
+        ]}),
+        Wire::OpenAi,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    // No rung was attempted, and the refusal echoes nothing from the request.
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["error"]["skipped"].as_array().unwrap().len(), 0);
+    assert!(!text.contains("private text"), "{text}");
+    assert!(!text.contains("synthesis"), "{text}");
+}
+
+#[tokio::test]
+async fn an_unrefused_prompt_still_walks_the_ladder() {
+    let state = refusing_state();
+    refresh_credits_once(&state).await;
+
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash", "messages": [
+            { "role": "system", "content": "You are a precise extraction engine." }
+        ]}),
+        Wire::OpenAi,
+    )
+    .await;
+
+    // The rung is tried and fails at the closed port: the request was let through.
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn refusal_runs_after_authentication() {
+    let state = state_with(
+        "api_key = \"s3cret\"\n\n[refuse]\nsystem_prefixes = [\"You are a synthesis engine\"]",
+    );
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash", "messages": [
+            { "role": "system", "content": "You are a synthesis engine." }
+        ]}),
+        Wire::OpenAi,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
