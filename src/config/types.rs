@@ -34,6 +34,10 @@ pub struct Config {
     /// one request carries. Off unless a prefix is set.
     #[serde(default)]
     pub markers: crate::markers::Markers,
+    /// Requests refused before any upstream call, by the start of their
+    /// system prompt. Off unless a prefix is listed.
+    #[serde(default)]
+    pub refuse: crate::refusal::Refuse,
     /// The ladders, in no particular order; requests select one by name.
     pub ladders: Vec<Ladder>,
 }

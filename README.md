@@ -486,6 +486,26 @@ or stored, and neither is any part of the body — an operator investigating a
 mixed request gets a count and somewhere to look, not a copy of the content.
 Counting is off entirely unless `prefix` is set, and no body is scanned then.
 
+## Refusing requests by system prompt
+
+Some requests should never leave the router: a caller's background job that was
+meant to be switched off, say, and must stay off even if the caller's own setting
+drifts back on. They are usually recognisable by a fixed instruction at the
+start of the system prompt, and the router can turn them away by that alone.
+
+```toml
+[refuse]
+system_prefixes = ["You are a summarisation engine"]
+```
+
+A chat request (any of the three chat wires) whose system prompt starts with a
+listed prefix is answered `403` before a ladder is looked up, so no provider is
+called and nothing is billed. Matching is case-sensitive, on the start of the
+prompt only, after leading whitespace; a blank entry is ignored rather than
+refusing everything. The log line names the ladder and the index of the rule
+that matched, never the prompt or any other part of the request. Embeddings,
+image and video requests are never refused here.
+
 ## Direct providers
 
 Not every model is resold. `kind = "mistral"` reaches Mistral's own API, where

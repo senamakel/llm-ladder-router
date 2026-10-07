@@ -617,6 +617,19 @@ async fn route(state: State, headers: &HeaderMap, body: serde_json::Value, wire:
     };
     let name = name.to_string();
 
+    // A request the operator never wants sent upstream, recognised by the
+    // start of its system prompt. Refused before the ladder is even looked up,
+    // so it costs no attempt and bills nothing. The log names the rule's index
+    // only -- never the prompt or any other part of the body.
+    if let Some(rule) = crate::refusal::matching_rule(&body, wire, &state.config.refuse) {
+        tracing::warn!(ladder = %name, rule, "request refused by system prompt rule");
+        return problem(
+            StatusCode::FORBIDDEN,
+            "request refused by router policy",
+            &[],
+        );
+    }
+
     // How many distinct caller identities this one request carries. Counted
     // once, before dispatch, so a body that mixes callers is visible even if
     // every rung then fails. Only the number is recorded -- never the markers
