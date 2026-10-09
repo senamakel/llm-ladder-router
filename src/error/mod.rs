@@ -56,6 +56,15 @@ pub enum Error {
         field: String,
     },
 
+    /// A setting held a value its section cannot use.
+    #[error("{field} {reason}")]
+    InvalidSetting {
+        /// The configuration field that carried the bad value.
+        field: String,
+        /// What the value must be instead.
+        reason: &'static str,
+    },
+
     /// The configuration defined no ladders, or a ladder had no rungs.
     #[error("{what} must not be empty")]
     Empty {

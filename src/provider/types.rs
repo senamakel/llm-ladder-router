@@ -86,6 +86,10 @@ pub struct Dispatched {
     /// nothing observed here sends it; guessing at a clock skew to convert one
     /// would be a worse answer than falling back to the configured default.
     pub retry_after: Option<std::time::Duration>,
+    /// What Surplus says it charged for the call, in micro-USD, from its
+    /// `x-si-buyer-cost-micro` header. The usage feed's fallback when the body
+    /// carries no charge of its own; `None` from every other provider.
+    pub buyer_cost_micro: Option<f64>,
 }
 
 /// Reads a `Retry-After` header in its delta-seconds form.

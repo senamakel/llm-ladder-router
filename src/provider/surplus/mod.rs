@@ -277,6 +277,11 @@ pub fn inference_path(chosen: &Chosen, wire: Wire) -> String {
     }
 }
 
+/// The response header in which Surplus states what it charged for a call,
+/// in micro-USD. The body's `usage.buyer_cost_micro` says the same and is
+/// preferred; this is read when a body carries no usage.
+pub const HEADER_BUYER_COST_MICRO: &str = "x-si-buyer-cost-micro";
+
 /// `POST /v1/images/generations`, the undiscounted images route.
 pub const IMAGES_PATH: &str = "/v1/images/generations";
 

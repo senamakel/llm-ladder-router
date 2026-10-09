@@ -38,6 +38,10 @@ pub struct Config {
     /// system prompt. Off unless a prefix is listed.
     #[serde(default)]
     pub refuse: crate::refusal::Refuse,
+    /// Where per-call cost records are posted. Off when absent: served calls
+    /// are logged with their figures either way.
+    #[serde(default)]
+    pub usage_sink: Option<crate::usage::UsageSink>,
     /// The ladders, in no particular order; requests select one by name.
     pub ladders: Vec<Ladder>,
 }

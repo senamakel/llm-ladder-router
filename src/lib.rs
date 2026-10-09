@@ -71,6 +71,7 @@ pub mod provider;
 pub mod proxy;
 pub mod refusal;
 pub mod session;
+pub mod usage;
 
 pub use config::{
     Config, CostBasis, Ladder, PriceUnit, Provider, ProviderKind, RateLimits, Rung, Sessions,

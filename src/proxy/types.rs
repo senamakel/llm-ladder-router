@@ -64,4 +64,7 @@ pub struct State {
     /// Which rung submitted each recent video job, so a job that fails after
     /// it was handed over can still park its rung.
     pub jobs: Arc<RwLock<super::jobs::RecentJobs>>,
+    /// Where each served call's cost record is queued, when `[usage_sink]` is
+    /// configured and its token is set.
+    pub usage: Option<crate::usage::Feed>,
 }

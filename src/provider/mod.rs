@@ -107,6 +107,12 @@ impl Client {
         }
     }
 
+    /// Which marketplace dialect this provider speaks.
+    #[must_use]
+    pub fn kind(&self) -> ProviderKind {
+        self.provider.kind
+    }
+
     /// Whether this provider's credential was present in the environment.
     #[must_use]
     pub fn has_credential(&self) -> bool {
@@ -270,6 +276,11 @@ impl Client {
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok()),
         );
+        let buyer_cost_micro = response
+            .headers()
+            .get(surplus::HEADER_BUYER_COST_MICRO)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<f64>().ok());
         let bytes = response.bytes().await.map_err(|source| Error::Upstream {
             provider: self.name.clone(),
             source,
@@ -281,6 +292,7 @@ impl Client {
             served_by: served_by(&body),
             content_type,
             retry_after,
+            buyer_cost_micro,
             body,
         })
     }

@@ -23,7 +23,8 @@ src/
 ├── provider/           # marketplace clients
 │   ├── openrouter/     # enforces `provider.max_price` directly
 │   └── surplus/        # ceiling restated as a `/min{N}/` discount
-└── proxy/              # the HTTP surfaces, failover loop, and background refreshers
+├── proxy/              # the HTTP surfaces, failover loop, and background refreshers
+└── usage/              # per-call cost figures, and the optional batched usage feed
 bin/ladder.rs           # the binary entry point (see below)
 tests/                  # integration tests against the public API only
 tests/fixtures/         # payloads captured from the live marketplace APIs
