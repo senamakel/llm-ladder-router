@@ -65,6 +65,8 @@ impl Config {
     ///   which it would intentionally bypass.
     /// - [`Error::Empty`] if a declared `reasoning_effort` is blank, which would
     ///   otherwise reach an upstream as an empty string and be rejected there.
+    /// - [`Error::Empty`] or [`Error::InvalidSetting`] for a `[usage_sink]`
+    ///   that could never deliver; see [`crate::usage::UsageSink::validate`].
     fn validate(&self) -> Result<()> {
         if self.ladders.is_empty() {
             return Err(Error::Empty {
@@ -91,6 +93,10 @@ impl Config {
         }
 
         self.check_names_are_unique()?;
+
+        if let Some(sink) = &self.usage_sink {
+            sink.validate()?;
+        }
 
         for ladder in &self.ladders {
             if ladder.rungs.is_empty() {

@@ -87,6 +87,10 @@ pub fn build_with_credentials(
         })
         .collect();
 
+    let usage = match &config.usage_sink {
+        Some(sink) => crate::usage::Feed::from_env(sink)?,
+        None => None,
+    };
     let config_sessions = config.sessions.clone();
     let state = State {
         config: Arc::new(config),
@@ -102,6 +106,7 @@ pub fn build_with_credentials(
             RECENT_JOB_TTL,
             RECENT_JOB_CAP,
         ))),
+        usage,
     };
 
     let app = axum::Router::new()
@@ -170,6 +175,9 @@ pub async fn serve_with_credentials(
     tracing::info!(models, "initial refresh complete");
 
     refresh::spawn(state.clone());
+    if let Some(feed) = &state.usage {
+        feed.start();
+    }
 
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
@@ -765,10 +773,11 @@ async fn walk(
         };
 
         match dispatch(client, &chosen, wire, &body, confirm, origin).await {
-            Attempt::Served(response, job_id) => {
+            Attempt::Served(response, job_id, dispatched) => {
                 if let Some(id) = job_id {
                     remember_job(state, &id, name, &chosen).await;
                 }
+                observe(state, ladder_config, &chosen, client.kind(), dispatched);
                 tracing::info!(
                     ladder = %name,
                     rung = chosen.rung,
@@ -868,6 +877,38 @@ async fn choose(
     )
 }
 
+/// Records what a served call cost, off the response path.
+///
+/// The caller's response is already built and is not touched: the answer it
+/// was built from is moved onto a task of its own, read there for its figures,
+/// logged, and queued for the usage feed if one is running.
+fn observe(
+    state: &State,
+    ladder: &crate::config::Ladder,
+    chosen: &Chosen,
+    kind: crate::config::ProviderKind,
+    dispatched: crate::provider::Dispatched,
+) {
+    let feed = state.usage.clone();
+    let ladder_name = ladder.name.clone();
+    let surface = surface_name(ladder.surface);
+    let (rung, provider, model) = (chosen.rung, chosen.provider.clone(), chosen.model.clone());
+    tokio::spawn(async move {
+        let figures = crate::usage::figures(
+            kind,
+            dispatched.content_type.as_deref(),
+            &dispatched.body,
+            dispatched.buyer_cost_micro,
+        );
+        let record =
+            crate::usage::Record::new(&ladder_name, rung, &provider, &model, surface, figures);
+        crate::usage::log(&record);
+        if let Some(feed) = feed {
+            feed.push(record);
+        }
+    });
+}
+
 /// Parks a failed rung when its failure says the next request would fail too.
 async fn park_for(state: &State, ladder: &str, chosen: &Chosen, kind: Failure) {
     match kind {
@@ -944,8 +985,10 @@ enum Failure {
 
 /// What one rung's dispatch produced.
 enum Attempt {
-    /// The rung served; for a video submission, the id of the job it made.
-    Served(Response, Option<String>),
+    /// The rung served; for a video submission, the id of the job it made;
+    /// and the upstream answer the response was built from, for the usage
+    /// record.
+    Served(Response, Option<String>, crate::provider::Dispatched),
     /// The upstream failed on its own account, and whether it was refusing on
     /// purpose or simply broken.
     Advance {
@@ -1002,7 +1045,7 @@ async fn dispatch(
     });
 
     match disposition {
-        Disposition::Served => Attempt::Served(built, job_id),
+        Disposition::Served => Attempt::Served(built, job_id, dispatched),
         Disposition::CallerError => Attempt::CallerError(built),
         Disposition::Advance => Attempt::Advance {
             detail: format!(

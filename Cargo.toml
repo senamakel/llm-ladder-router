@@ -57,6 +57,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
 # Credentials are read from the environment; `.env` is the local convenience.
 dotenvy = "0.15"
+# Each usage record carries a random v4 id, so the backend the usage feed posts
+# to can drop a batch it has already seen when a retry repeats one.
+uuid = { version = "1", default-features = false, features = ["v4"] }
+# RFC 3339 timestamps on usage records. Already in the tree through
+# `humantime-serde`; named directly so the feed does not reach through it.
+humantime = "2"
 
 [dev-dependencies]
 # Integration tests bind a loopback server to assert what reaches the wire.

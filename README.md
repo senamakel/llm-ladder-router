@@ -506,6 +506,47 @@ refusing everything. The log line names the ladder and the index of the rule
 that matched, never the prompt or any other part of the request. Embeddings,
 image and video requests are never refused here.
 
+## Usage feed
+
+Every call a rung serves is logged once with what it cost — `ladder`, `rung`,
+`provider`, `model`, `surface`, `prompt_tokens`, `completion_tokens`,
+`actual_usd` (what the account was charged) and `market_usd` (the list price of
+the same call). The figures are read from the upstream's own answer, after the
+caller's response is built and on a task of its own, so reading them never
+delays or alters what the caller receives. Never any prompt or completion text.
+
+| Provider | `actual_usd` | `market_usd` |
+| --- | --- | --- |
+| Surplus | `usage.buyer_cost_micro` ÷ 10⁶, else the `x-si-buyer-cost-micro` header | `usage.cost_details.upstream_inference_cost` |
+| `OpenRouter` | `usage.cost` | `usage.cost` |
+| direct providers | unknown | unknown |
+
+A streamed answer is read through an incremental tap that holds one line at a
+time and parses only the `data:` events naming `usage` — the final chunk on a
+chat stream, `response.completed` on Responses, `message_start` and
+`message_delta` on Anthropic. It reads the same bytes the caller is handed
+(today the router reads an upstream answer in full before relaying it, stream
+or not; the tap adds no buffering of its own). Anything a response does not
+state is `null`, never estimated.
+
+To also post the records somewhere, add a `[usage_sink]` (see
+`config.example.toml` for every knob):
+
+```toml
+[usage_sink]
+url = "https://backend.example/internal/memory/model-usage"
+token_env = "LADDER_USAGE_FEED_TOKEN"   # bearer token, read from the environment
+```
+
+Records are batched (`max_batch`, `flush_interval`) and posted as
+`{"records": [...]}` with `Authorization: Bearer <token>`; each carries a random
+v4 `id` and an RFC 3339 `at`, so a receiver can ignore a batch a retry repeats.
+Delivery is best-effort: a transport error, 5xx, 408 or 429 is retried with
+doubling backoff up to `max_retries` times and then dropped with a warning; any
+other refusal is dropped at once; a full queue (`queue_size`) drops new records
+and logs how many on the next flush. Without the section, or with the token
+variable unset, nothing is posted and nothing else changes.
+
 ## Direct providers
 
 Not every model is resold. `kind = "mistral"` reaches Mistral's own API, where
