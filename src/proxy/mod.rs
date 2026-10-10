@@ -882,6 +882,10 @@ async fn choose(
 /// The caller's response is already built and is not touched: the answer it
 /// was built from is moved onto a task of its own, read there for its figures,
 /// logged, and queued for the usage feed if one is running.
+///
+/// The model's list price is read from the price table on that task too, and
+/// only while the table's snapshot is fresh: a stale price is no better a
+/// basis for a market cost than for admitting a seller.
 fn observe(
     state: &State,
     ladder: &crate::config::Ladder,
@@ -890,15 +894,24 @@ fn observe(
     dispatched: crate::provider::Dispatched,
 ) {
     let feed = state.usage.clone();
+    let prices = state.prices.clone();
+    let stale_after = state.config.pricing.stale_after;
     let ladder_name = ladder.name.clone();
     let surface = surface_name(ladder.surface);
     let (rung, provider, model) = (chosen.rung, chosen.provider.clone(), chosen.model.clone());
     tokio::spawn(async move {
+        let list_price = prices
+            .read()
+            .await
+            .get(&provider, &model)
+            .filter(|snapshot| !snapshot.is_stale(stale_after))
+            .and_then(|snapshot| snapshot.list_price);
         let figures = crate::usage::figures(
             kind,
             dispatched.content_type.as_deref(),
             &dispatched.body,
             dispatched.buyer_cost_micro,
+            list_price,
         );
         let record =
             crate::usage::Record::new(&ladder_name, rung, &provider, &model, surface, figures);

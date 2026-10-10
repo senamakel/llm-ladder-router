@@ -576,25 +576,33 @@ async fn refusal_runs_after_authentication() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// A loopback Surplus whose chat completions stream back a final usage chunk,
-/// and a loopback usage sink that keeps every batch posted to it.
-async fn surplus_and_sink() -> (
+/// A Surplus stream from a seller that states the market cost of the call.
+const REPORTED_STREAM: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n\
+    data: {\"choices\":[],\"usage\":{\"prompt_tokens\":13,\"completion_tokens\":16,\"total_tokens\":29,\"cost\":0,\"is_byok\":true,\"cost_details\":{\"upstream_inference_cost\":0.00000995},\"buyer_cost_micro\":0}}\n\n\
+    data: [DONE]\n\n";
+
+/// The same call from a seller that does not: no `cost_details`.
+const UNPRICED_STREAM: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n\
+    data: {\"choices\":[],\"usage\":{\"prompt_tokens\":13,\"completion_tokens\":16,\"total_tokens\":29,\"cost\":0,\"buyer_cost_micro\":0}}\n\n\
+    data: [DONE]\n\n";
+
+/// A loopback Surplus whose chat completions answer with `stream`, and a
+/// loopback usage sink that keeps every batch posted to it.
+async fn surplus_and_sink(
+    stream: &'static str,
+) -> (
     String,
     String,
     Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
 ) {
     use axum::routing::post;
 
-    const STREAM: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n\
-        data: {\"choices\":[],\"usage\":{\"prompt_tokens\":13,\"completion_tokens\":16,\"total_tokens\":29,\"cost\":0,\"is_byok\":true,\"cost_details\":{\"upstream_inference_cost\":0.00000995},\"buyer_cost_micro\":0}}\n\n\
-        data: [DONE]\n\n";
-
     let upstream = axum::Router::new().route(
         "/v1/chat/completions",
-        post(|| async {
+        post(move || async move {
             (
                 [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
-                STREAM,
+                stream,
             )
         }),
     );
@@ -621,11 +629,19 @@ async fn surplus_and_sink() -> (
     (urls.pop().unwrap(), sink_url, batches)
 }
 
-#[tokio::test]
-async fn a_served_stream_is_relayed_unchanged_and_its_cost_reaches_the_sink() {
-    let (upstream, sink_url, batches) = surplus_and_sink().await;
+/// Serves one streamed chat call through a ladder on the loopback Surplus,
+/// with `prices` as the price table's entry for its model, and returns what
+/// the caller received and the usage record the sink was sent.
+async fn serve_one(
+    stream: &'static str,
+    prices: Option<crate::pricing::ModelPrices>,
+) -> (axum::body::Bytes, serde_json::Value) {
+    let (upstream, sink_url, batches) = surplus_and_sink(stream).await;
     let config = Config::parse(&format!(
         r#"
+        [pricing]
+        stale_after = "1h"
+
         [providers.surplus]
         kind = "surplus"
         base_url = "{upstream}"
@@ -653,6 +669,13 @@ async fn a_served_stream_is_relayed_unchanged_and_its_cost_reaches_the_sink() {
         crate::usage::Feed::new(state.config.usage_sink.as_ref().unwrap(), "feed-token").unwrap();
     feed.start();
     state.usage = Some(feed);
+    if let Some(prices) = prices {
+        state
+            .prices
+            .write()
+            .await
+            .insert("surplus", "glm-5.3-flash", prices);
+    }
 
     let response = route(
         state,
@@ -666,9 +689,6 @@ async fn a_served_stream_is_relayed_unchanged_and_its_cost_reaches_the_sink() {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    // The caller gets the stream byte for byte, usage chunk included.
-    assert!(body.starts_with(b"data: {\"choices\":[{\"delta\""));
-    assert!(body.ends_with(b"data: [DONE]\n\n"));
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     while batches.lock().unwrap().is_empty() {
@@ -676,6 +696,35 @@ async fn a_served_stream_is_relayed_unchanged_and_its_cost_reaches_the_sink() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     let record = batches.lock().unwrap()[0]["records"][0].clone();
+    (body, record)
+}
+
+/// glm-5.3-flash's order book as the refresher stores it: one seller, and the
+/// model's 0.15 / 0.50 list price.
+fn glm_flash_prices() -> crate::pricing::ModelPrices {
+    let seller = crate::pricing::Offer {
+        provider: "InferHub".to_string(),
+        tag: None,
+        prompt_per_1m: 0.001_5,
+        completion_per_1m: 0.005,
+        direct_completion_per_1m: Some(0.50),
+        usable: true,
+    };
+    crate::pricing::ModelPrices::new(vec![seller]).with_list_price(Some(
+        crate::pricing::ListPrice {
+            prompt_per_1m: 0.15,
+            completion_per_1m: 0.50,
+        },
+    ))
+}
+
+#[tokio::test]
+async fn a_served_stream_is_relayed_unchanged_and_its_cost_reaches_the_sink() {
+    let (body, record) = serve_one(REPORTED_STREAM, Some(glm_flash_prices())).await;
+
+    // The caller gets the stream byte for byte, usage chunk included.
+    assert_eq!(&body[..], REPORTED_STREAM.as_bytes());
+
     assert_eq!(record["ladder"], "memory-flash");
     assert_eq!(record["rung"], 0);
     assert_eq!(record["provider"], "surplus");
@@ -684,5 +733,38 @@ async fn a_served_stream_is_relayed_unchanged_and_its_cost_reaches_the_sink() {
     assert_eq!(record["prompt_tokens"], 13);
     assert_eq!(record["completion_tokens"], 16);
     assert_eq!(record["actual_usd"], 0.0);
+    // Reported by the seller, so the list price is not consulted.
     assert_eq!(record["market_usd"], 0.000_009_95);
+    assert_eq!(record["market_source"], "reported");
+}
+
+#[tokio::test]
+async fn an_unpriced_surplus_call_is_priced_at_the_fresh_list_price() {
+    let (body, record) = serve_one(UNPRICED_STREAM, Some(glm_flash_prices())).await;
+
+    assert_eq!(&body[..], UNPRICED_STREAM.as_bytes());
+    let market = record["market_usd"].as_f64().unwrap();
+    assert!((market - 0.000_009_95).abs() < 1e-15, "{market}");
+    assert_eq!(record["market_source"], "list_price");
+    assert_eq!(record["actual_usd"], 0.0);
+}
+
+#[tokio::test]
+async fn an_unpriced_call_with_no_price_table_entry_stays_unknown() {
+    let (_, record) = serve_one(UNPRICED_STREAM, None).await;
+    assert!(record["market_usd"].is_null(), "{record}");
+    assert!(record["market_source"].is_null(), "{record}");
+}
+
+#[tokio::test]
+async fn an_unpriced_call_is_not_priced_from_a_stale_price_table() {
+    let mut prices = glm_flash_prices();
+    // Older than the configured hour: no more trusted for a market cost than
+    // for admitting a seller.
+    prices.fetched_at = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(2 * 60 * 60))
+        .unwrap();
+    let (_, record) = serve_one(UNPRICED_STREAM, Some(prices)).await;
+    assert!(record["market_usd"].is_null(), "{record}");
+    assert!(record["market_source"].is_null(), "{record}");
 }

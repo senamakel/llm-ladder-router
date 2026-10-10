@@ -81,6 +81,6 @@ pub use cooldown::{Cooldowns, Cooled};
 pub use credits::CreditState;
 pub use error::{Error, Result};
 pub use ladder::{Chosen, Selection, SkipReason, Skipped, select, select_pinned};
-pub use pricing::{ModelPrices, Offer, PriceTable};
+pub use pricing::{ListPrice, ModelPrices, Offer, PriceTable};
 pub use proxy::serve;
 pub use session::{Pin, PinRejected, SessionPins};

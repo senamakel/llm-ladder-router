@@ -170,3 +170,37 @@ fn inserting_the_same_key_replaces_the_snapshot() {
         "new"
     );
 }
+
+#[test]
+fn a_list_price_costs_each_side_at_its_own_rate() {
+    let list = ListPrice {
+        prompt_per_1m: 0.15,
+        completion_per_1m: 0.50,
+    };
+    let cost = list.cost(Some(13), Some(16)).unwrap();
+    assert!((cost - 0.000_009_95).abs() < 1e-15, "{cost}");
+    assert_eq!(list.cost(Some(0), Some(0)), Some(0.0));
+}
+
+#[test]
+fn a_list_price_needs_both_token_counts() {
+    let list = ListPrice {
+        prompt_per_1m: 0.15,
+        completion_per_1m: 0.50,
+    };
+    assert_eq!(list.cost(None, Some(16)), None);
+    assert_eq!(list.cost(Some(13), None), None);
+    // A count too large to be a real call is not priced either.
+    assert_eq!(list.cost(Some(u64::MAX), Some(1)), None);
+}
+
+#[test]
+fn a_snapshot_carries_a_list_price_only_when_given_one() {
+    let bare = ModelPrices::new(vec![offer("Z.ai", 0.1, 0.2)]);
+    assert_eq!(bare.list_price, None);
+    let list = ListPrice {
+        prompt_per_1m: 1.0,
+        completion_per_1m: 2.0,
+    };
+    assert_eq!(bare.with_list_price(Some(list)).list_price, Some(list));
+}
