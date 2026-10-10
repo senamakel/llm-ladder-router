@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::error::{Error, Result};
 use crate::ladder::Chosen;
-use crate::pricing::{ModelPrices, Offer};
+use crate::pricing::{ListPrice, ModelPrices, Offer};
 use crate::provider::types::{Disposition, Wire};
 
 /// Surplus quotes money as an integer number of micro-USD, as a string.
@@ -31,6 +31,9 @@ struct MarketOffer {
     price_input_per_1m: Option<f64>,
     /// Micro-USD per million tokens.
     price_output_per_1m: Option<f64>,
+    /// The undiscounted input price the offer is quoted against, micro-USD
+    /// per million tokens: the model's list price, the same on every offer.
+    direct_input_per_1m: Option<f64>,
     /// The undiscounted price the offer is quoted against, micro-USD per
     /// million tokens.
     direct_output_per_1m: Option<f64>,
@@ -124,6 +127,7 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
         what: "order book".to_string(),
     })?;
 
+    let list_price = list_price(&book.offers);
     let offers = book
         .offers
         .into_iter()
@@ -154,7 +158,30 @@ pub fn parse_order_book(body: &[u8]) -> Result<ModelPrices> {
         })
         .collect();
 
-    Ok(ModelPrices::new(offers))
+    Ok(ModelPrices::new(offers).with_list_price(list_price))
+}
+
+/// The model's list price per token, from the undiscounted prices its offers
+/// are quoted against.
+///
+/// Every offer quotes the same reference price — measured across all 252
+/// offers on `glm-5.3-flash`, at the model's published 0.15 / 0.50 USD per
+/// million — so the first offer that publishes both is the model's. A model
+/// priced per media unit (an embedding, image or video model) publishes its
+/// per-token direct prices as zero, and has no per-token list price.
+fn list_price(offers: &[MarketOffer]) -> Option<ListPrice> {
+    offers
+        .iter()
+        .filter(|offer| offer.media_unit.is_none())
+        .find_map(|offer| {
+            let prompt = offer.direct_input_per_1m?;
+            let completion = offer.direct_output_per_1m?;
+            let usable = |price: f64| price.is_finite() && price >= 0.0;
+            (usable(prompt) && usable(completion) && prompt + completion > 0.0).then(|| ListPrice {
+                prompt_per_1m: prompt / MICRO_USD,
+                completion_per_1m: completion / MICRO_USD,
+            })
+        })
 }
 
 /// Parses a buyer profile into the spendable balance in USD: the wallet

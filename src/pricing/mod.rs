@@ -7,7 +7,7 @@
 
 mod types;
 
-pub use types::{ModelPrices, Offer};
+pub use types::{ListPrice, ModelPrices, Offer};
 
 use std::collections::BTreeMap;
 

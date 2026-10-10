@@ -510,14 +510,14 @@ image and video requests are never refused here.
 
 Every call a rung serves is logged once with what it cost — `ladder`, `rung`,
 `provider`, `model`, `surface`, `prompt_tokens`, `completion_tokens`,
-`actual_usd` (what the account was charged) and `market_usd` (the list price of
-the same call). The figures are read from the upstream's own answer, after the
+`actual_usd` (what the account was charged), `market_usd` (the list price of
+the same call) and `market_source` (where that came from). The figures are read from the upstream's own answer, after the
 caller's response is built and on a task of its own, so reading them never
 delays or alters what the caller receives. Never any prompt or completion text.
 
 | Provider | `actual_usd` | `market_usd` |
 | --- | --- | --- |
-| Surplus | `usage.buyer_cost_micro` ÷ 10⁶, else the `x-si-buyer-cost-micro` header | `usage.cost_details.upstream_inference_cost` |
+| Surplus | `usage.buyer_cost_micro` ÷ 10⁶, else the `x-si-buyer-cost-micro` header | `usage.cost_details.upstream_inference_cost`, else tokens × list price |
 | `OpenRouter` | `usage.cost` | `usage.cost` |
 | direct providers | unknown | unknown |
 
@@ -527,7 +527,18 @@ chat stream, `response.completed` on Responses, `message_start` and
 `message_delta` on Anthropic. It reads the same bytes the caller is handed
 (today the router reads an upstream answer in full before relaying it, stream
 or not; the tap adds no buffering of its own). Anything a response does not
-state is `null`, never estimated.
+state is `null`, never estimated — with one exception.
+
+Surplus states `cost_details.upstream_inference_cost` for some sellers only,
+and where it does, it is exactly the token counts at the model's list price.
+So a Surplus call without one is priced that way: `prompt_tokens` and
+`completion_tokens`, each at its own rate, from the undiscounted
+`direct_input_per_1m` / `direct_output_per_1m` the order book already quotes
+(read by the price refresher, never fetched per call). `market_source` says
+which happened: `reported`, `list_price`, or `null` when `market_usd` is. A
+reported figure always wins; a missing token count, a model with no per-token
+list price (embedding, image and video models are priced per unit), or a price
+table entry older than `pricing.stale_after` leaves `market_usd` `null`.
 
 To also post the records somewhere, add a `[usage_sink]` (see
 `config.example.toml` for every knob):

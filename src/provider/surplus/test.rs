@@ -635,3 +635,71 @@ fn a_polled_job_is_read_for_whether_the_marketplace_placed_it() {
         "/v1/media/artifacts/01JOB/0"
     );
 }
+
+/// Two offers on a token-priced model, each quoting the model's list price as
+/// its undiscounted one: glm-5.3-flash at 0.15 / 0.50 USD per Mtok.
+fn order_book_with_list_price() -> String {
+    serde_json::json!({
+        "offers": [
+            {
+                "provider": "InferHub",
+                "price_input_per_1m": 1496.0,
+                "price_output_per_1m": 4987.0,
+                "direct_output_per_1m": 500_000.0,
+                "available": true,
+                "healthy": true,
+            },
+            {
+                "provider": "OpenRouter",
+                "price_input_per_1m": 1500.0,
+                "price_output_per_1m": 5000.0,
+                "direct_input_per_1m": 150_000.0,
+                "direct_output_per_1m": 500_000.0,
+                "available": false,
+                "healthy": false,
+            },
+        ]
+    })
+    .to_string()
+}
+
+#[test]
+fn the_list_price_is_read_from_the_offers_undiscounted_prices() {
+    let prices = parse_order_book(order_book_with_list_price().as_bytes()).unwrap();
+    // The first offer publishes no direct input price, so the second -- usable
+    // or not, since the list price is the model's -- supplies both.
+    let list = prices.list_price.expect("a list price");
+    assert!((list.prompt_per_1m - 0.15).abs() < 1e-12, "{list:?}");
+    assert!((list.completion_per_1m - 0.50).abs() < 1e-12, "{list:?}");
+}
+
+#[test]
+fn an_order_book_without_direct_input_prices_has_no_list_price() {
+    let prices = parse_order_book(order_book(9668.0, true, true).as_bytes()).unwrap();
+    assert_eq!(prices.list_price, None);
+}
+
+#[test]
+fn a_zero_or_negative_list_price_is_not_one() {
+    let book = |input: f64, output: f64| {
+        serde_json::json!({ "offers": [{
+            "direct_input_per_1m": input,
+            "direct_output_per_1m": output,
+            "available": true,
+            "healthy": true,
+        }]})
+        .to_string()
+    };
+    let zero = parse_order_book(book(0.0, 0.0).as_bytes()).unwrap();
+    assert_eq!(zero.list_price, None);
+    let negative = parse_order_book(book(-1.0, 5.0).as_bytes()).unwrap();
+    assert_eq!(negative.list_price, None);
+}
+
+#[test]
+fn a_model_priced_per_media_unit_has_no_per_token_list_price() {
+    for book in [EMBEDDINGS_ORDER_BOOK, IMAGES_ORDER_BOOK, VIDEO_ORDER_BOOK] {
+        let prices = parse_order_book(book.as_bytes()).unwrap();
+        assert_eq!(prices.list_price, None);
+    }
+}

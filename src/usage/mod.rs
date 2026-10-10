@@ -16,7 +16,12 @@
 //!   `x-si-buyer-cost-micro` response header as a fallback when the body
 //!   carries none, and states the market price of the same call as
 //!   `usage.cost_details.upstream_inference_cost` (USD). Its `usage.cost` is
-//!   not either of those and is ignored.
+//!   not either of those and is ignored. Surplus states the market price only
+//!   for some sellers; where it does, it is exactly the token counts at the
+//!   model's list price, so where it does not, the market price is worked out
+//!   that way from the list price the price table already holds (refreshed
+//!   from the order book, never fetched per call), and marked `list_price`
+//!   rather than `reported`.
 //! - **`OpenRouter`** reports one `usage.cost` (USD), which is both what was
 //!   charged and the market price.
 //! - **Direct providers** report tokens only.
@@ -26,7 +31,9 @@
 //! `output_tokens` (Anthropic Messages and `OpenAI` Responses).
 //!
 //! A figure the response does not carry is `None`, and is posted as `null`.
-//! The router never estimates one from a price list.
+//! The one exception is Surplus's market price above, and it is derived only
+//! from reported token counts and a fresh, published list price — with either
+//! missing, or the price table stale, it stays `null` too.
 //!
 //! ## Streams
 //!
@@ -47,7 +54,7 @@ mod sink;
 pub mod types;
 
 pub use sink::Feed;
-pub use types::{Figures, Record, UsageSink};
+pub use types::{Figures, MarketSource, Record, UsageSink};
 
 use crate::config::ProviderKind;
 
@@ -62,12 +69,19 @@ const MAX_LINE: usize = 1 << 20;
 /// through an [`SseTap`], anything else is read as one JSON document.
 /// `buyer_cost_micro` is the value of Surplus's `x-si-buyer-cost-micro`
 /// header, used only when the body names no charge of its own.
+///
+/// `list_price` is the model's current list price from the price table, or
+/// `None` when the table has none or only a stale one. A Surplus answer that
+/// states no market cost — Surplus includes it for some sellers and not
+/// others — is priced at it instead; see [`Figures::priced_at`]. Other
+/// providers' figures are left as reported.
 #[must_use]
 pub fn figures(
     kind: ProviderKind,
     content_type: Option<&str>,
     body: &[u8],
     buyer_cost_micro: Option<f64>,
+    list_price: Option<crate::pricing::ListPrice>,
 ) -> Figures {
     let streamed = content_type.is_some_and(|value| value.contains("text/event-stream"));
     let mut figures = if streamed {
@@ -84,6 +98,9 @@ pub fn figures(
     };
     if kind == ProviderKind::Surplus && figures.actual_usd.is_none() {
         figures.actual_usd = buyer_cost_micro.and_then(micro_to_usd);
+    }
+    if kind == ProviderKind::Surplus {
+        figures = figures.priced_at(list_price);
     }
     figures
 }
@@ -102,6 +119,7 @@ pub fn log(record: &Record) {
         completion_tokens = record.completion_tokens,
         actual_usd = record.actual_usd,
         market_usd = record.market_usd,
+        market_source = record.market_source.map(MarketSource::as_str),
         "usage recorded"
     );
 }
@@ -238,6 +256,7 @@ fn read_usage(kind: ProviderKind, usage: &serde_json::Value) -> Figures {
         completion_tokens: count(["completion_tokens", "output_tokens"]),
         actual_usd,
         market_usd,
+        market_source: market_usd.map(|_| MarketSource::Reported),
     }
 }
 
