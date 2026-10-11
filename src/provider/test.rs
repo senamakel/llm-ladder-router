@@ -1122,3 +1122,35 @@ fn a_streams_sub_provider_is_read_from_its_first_event() {
     assert_eq!(super::served_by_in_stream(b"data: [DONE]\n\n"), None);
     assert_eq!(super::served_by_in_stream(b": keep-alive\n"), None);
 }
+
+#[test]
+fn a_surplus_model_listing_names_its_window_and_a_zero_names_none() {
+    assert_eq!(
+        surplus::parse_context_length(br#"{"id":"m","context_length":1048576}"#),
+        Some(1_048_576)
+    );
+    assert_eq!(
+        surplus::parse_context_length(br#"{"id":"m","context_length":0}"#),
+        None
+    );
+    assert_eq!(surplus::parse_context_length(br#"{"id":"m"}"#), None);
+    assert_eq!(surplus::parse_context_length(b"not json"), None);
+    assert_eq!(
+        surplus::model_path("deepseek-v4.1-flash"),
+        "/v1/models/deepseek-v4.1-flash"
+    );
+}
+
+#[test]
+fn openrouter_reports_the_smallest_window_among_usable_endpoints() {
+    let body = br#"{"data":{"endpoints":[
+        {"provider_name":"A","pricing":{"prompt":"0","completion":"0"},"status":0,"context_length":1048576},
+        {"provider_name":"B","pricing":{"prompt":"0","completion":"0"},"status":0,"context_length":163840},
+        {"provider_name":"C","pricing":{"prompt":"0","completion":"0"},"status":-1,"context_length":8192},
+        {"provider_name":"D","pricing":{"prompt":"0","completion":"0"},"status":0}
+    ]}}"#;
+    assert_eq!(
+        openrouter::parse_endpoints(body).unwrap().context_length,
+        Some(163_840)
+    );
+}

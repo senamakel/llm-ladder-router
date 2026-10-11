@@ -233,14 +233,17 @@ async fn list_models(AxumState(state): AxumState<State>) -> Json<serde_json::Val
 /// The context window a ladder advertises: its configured one, else the
 /// smallest any of its rungs' models lists, since any rung may serve.
 fn context_length(ladder: &crate::config::Ladder, prices: &PriceTable) -> Option<u64> {
-    ladder.context_length.filter(|tokens| *tokens > 0).or_else(|| {
-        ladder
-            .rungs
-            .iter()
-            .filter_map(|rung| prices.get(&rung.provider, &rung.model))
-            .filter_map(|model| model.context_length)
-            .min()
-    })
+    ladder
+        .context_length
+        .filter(|tokens| *tokens > 0)
+        .or_else(|| {
+            ladder
+                .rungs
+                .iter()
+                .filter_map(|rung| prices.get(&rung.provider, &rung.model))
+                .filter_map(|model| model.context_length)
+                .min()
+        })
 }
 
 /// The `OpenAI`-compatible entry point.

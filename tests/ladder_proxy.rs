@@ -54,6 +54,7 @@ async fn mock_surplus(behavior: Behavior, price_per_1m: f64) -> (String, Arc<Mut
     let app = Router::new()
         .route("/api/markets/{model}", get(surplus_order_book))
         .route("/v1/buyer/me", get(surplus_balance))
+        .route("/v1/models/{model}", get(surplus_model))
         // Both the plain and the discount-prefixed paths on both surfaces,
         // because which one the router picks is exactly what these tests check.
         .route("/v1/chat/completions", post(surplus_completions))
@@ -118,6 +119,11 @@ async fn surplus_order_book(
     }))
 }
 
+/// A model listing as Surplus serves it: a window the order book never names.
+async fn surplus_model(Path(model): Path<String>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "id": model, "context_length": 1_048_576 }))
+}
+
 async fn surplus_balance() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "balance_usdc": "74673082",
@@ -176,6 +182,7 @@ async fn openrouter_endpoints(State(state): State<MockState>) -> Json<serde_json
                         "completion": per_token.to_string(),
                     },
                     "status": 0,
+                    "context_length": 163_840,
                 },
                 {
                     "provider_name": "DigitalOcean",
@@ -185,6 +192,7 @@ async fn openrouter_endpoints(State(state): State<MockState>) -> Json<serde_json
                         "completion": per_token.to_string(),
                     },
                     "status": 0,
+                    "context_length": 1_048_576,
                 },
             ]
         }
@@ -621,6 +629,45 @@ async fn the_ladders_are_advertised_as_models() {
 
     assert_eq!(body["data"][0]["id"], "flash");
     assert_eq!(body["data"][0]["rungs"], 2);
+}
+
+#[tokio::test]
+async fn a_ladder_advertises_the_smallest_window_its_rungs_list() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&config_for(&surplus, &openrouter, 0.15)).await;
+
+    let body: serde_json::Value = reqwest::get(format!("{router}/v1/models"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // Surplus lists 1M for its rung; one OpenRouter endpoint only takes 160k,
+    // and any rung may serve. A client that cannot learn a window has to assume
+    // the worst; OpenHuman's assumption rewrote its history on every turn.
+    assert_eq!(body["data"][0]["context_length"], 163_840);
+}
+
+#[tokio::test]
+async fn a_configured_window_wins_over_the_listed_ones() {
+    let (surplus, _) = mock_surplus(Behavior::Serve("Z.ai".to_string()), 0.10).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let config = config_for(&surplus, &openrouter, 0.15).replace(
+        "aliases = [\"chat-v1\"]",
+        "aliases = [\"chat-v1\"]\n        context_length = 65536",
+    );
+    let router = start_router(&config).await;
+
+    let body: serde_json::Value = reqwest::get(format!("{router}/v1/models"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(body["data"][0]["context_length"], 65_536);
 }
 
 /// The same two-rung ladder, but behind a caller key.
