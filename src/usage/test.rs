@@ -29,6 +29,7 @@ fn a_surplus_answer_reports_its_charge_and_the_market_price_separately() {
         JSON,
         &completion(SURPLUS_USAGE),
         None,
+        None,
     );
 
     assert_eq!(figures.prompt_tokens, Some(13));
@@ -36,12 +37,13 @@ fn a_surplus_answer_reports_its_charge_and_the_market_price_separately() {
     // Charged nothing, and a zero is a figure, not an unknown.
     assert_eq!(figures.actual_usd, Some(0.0));
     assert_eq!(figures.market_usd, Some(0.000_009_95));
+    assert_eq!(figures.market_source, Some(MarketSource::Reported));
 }
 
 #[test]
 fn a_surplus_charge_in_micro_usd_is_converted_to_dollars() {
     let usage = r#"{"prompt_tokens":1000,"completion_tokens":500,"buyer_cost_micro":2500}"#;
-    let figures = figures(ProviderKind::Surplus, JSON, &completion(usage), None);
+    let figures = figures(ProviderKind::Surplus, JSON, &completion(usage), None, None);
 
     assert_eq!(figures.actual_usd, Some(0.0025));
     // No cost details means no market price, never a guess at one.
@@ -51,7 +53,7 @@ fn a_surplus_charge_in_micro_usd_is_converted_to_dollars() {
 #[test]
 fn surplus_falls_back_to_its_charge_header_only_when_the_body_names_none() {
     let bare = completion(r#"{"prompt_tokens":3,"completion_tokens":4}"#);
-    let from_header = figures(ProviderKind::Surplus, JSON, &bare, Some(1200.0));
+    let from_header = figures(ProviderKind::Surplus, JSON, &bare, Some(1200.0), None);
     assert_eq!(from_header.actual_usd, Some(0.0012));
 
     // The body wins when it carries a charge.
@@ -60,18 +62,25 @@ fn surplus_falls_back_to_its_charge_header_only_when_the_body_names_none() {
         JSON,
         &completion(SURPLUS_USAGE),
         Some(1200.0),
+        None,
     );
     assert_eq!(both.actual_usd, Some(0.0));
 
     // Another provider's header is not Surplus's charge.
-    let other = figures(ProviderKind::OpenRouter, JSON, &bare, Some(1200.0));
+    let other = figures(ProviderKind::OpenRouter, JSON, &bare, Some(1200.0), None);
     assert_eq!(other.actual_usd, None);
 }
 
 #[test]
 fn an_openrouter_cost_is_both_the_charge_and_the_market_price() {
     let usage = r#"{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30,"cost":0.000042,"is_byok":false}"#;
-    let figures = figures(ProviderKind::OpenRouter, JSON, &completion(usage), None);
+    let figures = figures(
+        ProviderKind::OpenRouter,
+        JSON,
+        &completion(usage),
+        None,
+        None,
+    );
 
     assert_eq!(figures.prompt_tokens, Some(20));
     assert_eq!(figures.completion_tokens, Some(10));
@@ -84,7 +93,7 @@ fn surplus_cost_field_is_not_mistaken_for_a_price() {
     // Surplus's `cost` is 0 on a BYOK call that still had a market price;
     // reading it as OpenRouter's would report a free call.
     let usage = r#"{"prompt_tokens":1,"completion_tokens":1,"cost":0.5}"#;
-    let figures = figures(ProviderKind::Surplus, JSON, &completion(usage), None);
+    let figures = figures(ProviderKind::Surplus, JSON, &completion(usage), None, None);
     assert_eq!(figures.actual_usd, None);
     assert_eq!(figures.market_usd, None);
 }
@@ -92,7 +101,7 @@ fn surplus_cost_field_is_not_mistaken_for_a_price() {
 #[test]
 fn a_direct_provider_reports_tokens_and_no_cost() {
     let usage = r#"{"prompt_tokens":5,"completion_tokens":6,"cost":1.0}"#;
-    let figures = figures(ProviderKind::Mistral, JSON, &completion(usage), None);
+    let figures = figures(ProviderKind::Mistral, JSON, &completion(usage), None, None);
     assert_eq!(figures.prompt_tokens, Some(5));
     assert_eq!(figures.actual_usd, None);
     assert_eq!(figures.market_usd, None);
@@ -101,7 +110,7 @@ fn a_direct_provider_reports_tokens_and_no_cost() {
 #[test]
 fn anthropic_and_responses_token_spellings_are_read() {
     let messages = br#"{"type":"message","usage":{"input_tokens":7,"output_tokens":9}}"#;
-    let figures = figures(ProviderKind::OpenRouter, JSON, messages, None);
+    let figures = figures(ProviderKind::OpenRouter, JSON, messages, None, None);
     assert_eq!(figures.prompt_tokens, Some(7));
     assert_eq!(figures.completion_tokens, Some(9));
 }
@@ -109,7 +118,7 @@ fn anthropic_and_responses_token_spellings_are_read() {
 #[test]
 fn an_embeddings_answer_has_prompt_tokens_only() {
     let body = br#"{"object":"list","data":[],"usage":{"prompt_tokens":8,"total_tokens":8}}"#;
-    let figures = figures(ProviderKind::Surplus, JSON, body, None);
+    let figures = figures(ProviderKind::Surplus, JSON, body, None, None);
     assert_eq!(figures.prompt_tokens, Some(8));
     assert_eq!(figures.completion_tokens, None);
 }
@@ -118,7 +127,7 @@ fn an_embeddings_answer_has_prompt_tokens_only() {
 fn a_body_without_usage_or_unreadable_is_all_unknown() {
     let none = Figures::default();
     assert_eq!(
-        figures(ProviderKind::Surplus, JSON, br#"{"id":"x"}"#, None),
+        figures(ProviderKind::Surplus, JSON, br#"{"id":"x"}"#, None, None),
         none
     );
     assert_eq!(
@@ -126,12 +135,19 @@ fn a_body_without_usage_or_unreadable_is_all_unknown() {
             ProviderKind::Surplus,
             JSON,
             b"<html>bad gateway</html>",
+            None,
             None
         ),
         none
     );
     assert_eq!(
-        figures(ProviderKind::Surplus, None, br#"{"usage":"n/a"}"#, None),
+        figures(
+            ProviderKind::Surplus,
+            None,
+            br#"{"usage":"n/a"}"#,
+            None,
+            None
+        ),
         none
     );
 }
@@ -139,7 +155,7 @@ fn a_body_without_usage_or_unreadable_is_all_unknown() {
 #[test]
 fn a_negative_or_non_numeric_cost_is_unknown_rather_than_believed() {
     let usage = r#"{"buyer_cost_micro":-5,"cost_details":{"upstream_inference_cost":"0.1"}}"#;
-    let figures = figures(ProviderKind::Surplus, JSON, &completion(usage), None);
+    let figures = figures(ProviderKind::Surplus, JSON, &completion(usage), None, None);
     assert_eq!(figures.actual_usd, None);
     assert_eq!(figures.market_usd, None);
 }
@@ -158,19 +174,20 @@ fn surplus_stream() -> String {
 #[test]
 fn a_stream_reports_the_usage_in_its_final_chunk() {
     let stream = surplus_stream();
-    let figures = figures(ProviderKind::Surplus, SSE, stream.as_bytes(), None);
+    let figures = figures(ProviderKind::Surplus, SSE, stream.as_bytes(), None, None);
 
     assert_eq!(figures.prompt_tokens, Some(13));
     assert_eq!(figures.completion_tokens, Some(16));
     assert_eq!(figures.actual_usd, Some(0.0));
     assert_eq!(figures.market_usd, Some(0.000_009_95));
+    assert_eq!(figures.market_source, Some(MarketSource::Reported));
 }
 
 #[test]
 fn the_tap_reads_a_stream_split_at_every_possible_byte() {
     let stream = surplus_stream();
     let bytes = stream.as_bytes();
-    let whole = figures(ProviderKind::Surplus, SSE, bytes, None);
+    let whole = figures(ProviderKind::Surplus, SSE, bytes, None, None);
 
     // One byte at a time is the worst case for line reassembly.
     let mut tap = SseTap::new(ProviderKind::Surplus);
@@ -207,7 +224,7 @@ fn an_anthropic_stream_merges_usage_spread_across_events() {
          data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}\n\n\
          event: message_delta\n\
          data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":42}}\n\n";
-    let figures = figures(ProviderKind::OpenRouter, SSE, stream.as_bytes(), None);
+    let figures = figures(ProviderKind::OpenRouter, SSE, stream.as_bytes(), None, None);
     assert_eq!(figures.prompt_tokens, Some(11));
     assert_eq!(figures.completion_tokens, Some(42));
 }
@@ -216,7 +233,7 @@ fn an_anthropic_stream_merges_usage_spread_across_events() {
 fn a_responses_stream_reads_usage_from_the_completed_response() {
     let stream = "event: response.completed\n\
          data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":4,\"output_tokens\":5}}}\n\n";
-    let figures = figures(ProviderKind::Surplus, SSE, stream.as_bytes(), None);
+    let figures = figures(ProviderKind::Surplus, SSE, stream.as_bytes(), None, None);
     assert_eq!(figures.prompt_tokens, Some(4));
     assert_eq!(figures.completion_tokens, Some(5));
 }
@@ -225,7 +242,13 @@ fn a_responses_stream_reads_usage_from_the_completed_response() {
 fn a_stream_without_usage_is_all_unknown_and_the_header_still_applies() {
     let stream =
         "data: {\"choices\":[{\"delta\":{\"content\":\"the word usage\"}}]}\n\ndata: [DONE]\n\n";
-    let figures = figures(ProviderKind::Surplus, SSE, stream.as_bytes(), Some(7.0));
+    let figures = figures(
+        ProviderKind::Surplus,
+        SSE,
+        stream.as_bytes(),
+        Some(7.0),
+        None,
+    );
     assert_eq!(figures.prompt_tokens, None);
     assert_eq!(figures.actual_usd, Some(0.000_007));
 }
@@ -250,6 +273,7 @@ fn a_record_carries_routing_facts_and_figures_under_a_fresh_id() {
         completion_tokens: Some(16),
         actual_usd: Some(0.0),
         market_usd: None,
+        market_source: None,
     };
     let first = Record::new(
         "memory-flash",
@@ -284,6 +308,8 @@ fn a_record_carries_routing_facts_and_figures_under_a_fresh_id() {
     // Unknown is posted as null, not left out and not zero.
     assert!(json["market_usd"].is_null());
     assert!(json.as_object().unwrap().contains_key("market_usd"));
+    assert!(json["market_source"].is_null());
+    assert!(json.as_object().unwrap().contains_key("market_source"));
 }
 
 const LADDER: &str = r#"
@@ -399,4 +425,182 @@ fn a_usage_sink_with_an_unusable_value_names_the_field() {
             other => panic!("{line}: expected InvalidSetting, got {other:?}"),
         }
     }
+}
+
+/// glm-5.3-flash's list price, as its order book quotes it.
+const GLM_FLASH: crate::pricing::ListPrice = crate::pricing::ListPrice {
+    prompt_per_1m: 0.15,
+    completion_per_1m: 0.50,
+};
+
+/// A Surplus usage object from a seller that states no market cost: the
+/// shape most production calls arrive in.
+const SURPLUS_USAGE_UNPRICED: &str = r#"{"prompt_tokens":13,"completion_tokens":16,"total_tokens":29,"cost":0,"buyer_cost_micro":0}"#;
+
+fn assert_close(actual: Option<f64>, expected: f64) {
+    let actual = actual.expect("a figure");
+    assert!((actual - expected).abs() < 1e-15, "{actual} != {expected}");
+}
+
+#[test]
+fn a_surplus_answer_without_a_market_cost_is_priced_at_the_list_price() {
+    let figures = figures(
+        ProviderKind::Surplus,
+        JSON,
+        &completion(SURPLUS_USAGE_UNPRICED),
+        None,
+        Some(GLM_FLASH),
+    );
+
+    // 13 in and 16 out at 0.15 / 0.50 per million: the same 0.00000995 a
+    // seller that states the cost reports for the same call.
+    assert_close(figures.market_usd, 0.000_009_95);
+    assert_eq!(figures.market_source, Some(MarketSource::ListPrice));
+    // Only the market cost is derived; the charge is still what was reported.
+    assert_eq!(figures.actual_usd, Some(0.0));
+}
+
+#[test]
+fn a_reported_market_cost_wins_over_the_list_price() {
+    let list = crate::pricing::ListPrice {
+        prompt_per_1m: 9.0,
+        completion_per_1m: 9.0,
+    };
+    let figures = figures(
+        ProviderKind::Surplus,
+        JSON,
+        &completion(SURPLUS_USAGE),
+        None,
+        Some(list),
+    );
+    assert_eq!(figures.market_usd, Some(0.000_009_95));
+    assert_eq!(figures.market_source, Some(MarketSource::Reported));
+}
+
+#[test]
+fn an_unknown_list_price_leaves_the_market_cost_unknown() {
+    let figures = figures(
+        ProviderKind::Surplus,
+        JSON,
+        &completion(SURPLUS_USAGE_UNPRICED),
+        None,
+        None,
+    );
+    assert_eq!(figures.market_usd, None);
+    assert_eq!(figures.market_source, None);
+}
+
+#[test]
+fn a_missing_token_count_is_not_priced_as_zero() {
+    let output_unknown = completion(r#"{"prompt_tokens":13,"buyer_cost_micro":0}"#);
+    let priced = figures(
+        ProviderKind::Surplus,
+        JSON,
+        &output_unknown,
+        None,
+        Some(GLM_FLASH),
+    );
+    assert_eq!(priced.market_usd, None);
+    assert_eq!(priced.market_source, None);
+
+    let nothing = figures(ProviderKind::Surplus, JSON, b"{}", None, Some(GLM_FLASH));
+    assert_eq!(nothing.market_usd, None);
+}
+
+#[test]
+fn only_surplus_is_priced_at_the_list_price() {
+    // OpenRouter keeps its own `usage.cost`, and a call without one stays
+    // unknown rather than borrowing a price table entry.
+    let usage = r#"{"prompt_tokens":13,"completion_tokens":16}"#;
+    for kind in [
+        ProviderKind::OpenRouter,
+        ProviderKind::Mistral,
+        ProviderKind::Venice,
+    ] {
+        let unpriced = figures(kind, JSON, &completion(usage), None, Some(GLM_FLASH));
+        assert_eq!(unpriced.market_usd, None, "{kind:?}");
+        assert_eq!(unpriced.market_source, None, "{kind:?}");
+    }
+    let reported = r#"{"prompt_tokens":13,"completion_tokens":16,"cost":0.5}"#;
+    let priced = figures(
+        ProviderKind::OpenRouter,
+        JSON,
+        &completion(reported),
+        None,
+        Some(GLM_FLASH),
+    );
+    assert_eq!(priced.market_usd, Some(0.5));
+    assert_eq!(priced.market_source, Some(MarketSource::Reported));
+}
+
+#[test]
+fn a_stream_without_a_market_cost_is_priced_at_the_list_price() {
+    let stream = format!(
+        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"hi\"}}}}]}}\n\n\
+         data: {{\"choices\":[],\"usage\":{SURPLUS_USAGE_UNPRICED}}}\n\n\
+         data: [DONE]\n\n"
+    );
+    let figures = figures(
+        ProviderKind::Surplus,
+        SSE,
+        stream.as_bytes(),
+        None,
+        Some(GLM_FLASH),
+    );
+    assert_close(figures.market_usd, 0.000_009_95);
+    assert_eq!(figures.market_source, Some(MarketSource::ListPrice));
+}
+
+#[test]
+fn the_market_source_travels_with_the_market_cost_when_merging() {
+    let reported = Figures {
+        market_usd: Some(1.0),
+        market_source: Some(MarketSource::Reported),
+        ..Figures::default()
+    };
+    let silent = Figures {
+        prompt_tokens: Some(2),
+        ..Figures::default()
+    };
+    let merged = reported.merged(silent);
+    assert_eq!(merged.market_usd, Some(1.0));
+    assert_eq!(merged.market_source, Some(MarketSource::Reported));
+    assert_eq!(merged.prompt_tokens, Some(2));
+
+    let derived = Figures {
+        market_usd: Some(2.0),
+        market_source: Some(MarketSource::ListPrice),
+        ..Figures::default()
+    };
+    assert_eq!(
+        reported.merged(derived).market_source,
+        Some(MarketSource::ListPrice)
+    );
+}
+
+#[test]
+fn a_derived_market_cost_is_posted_and_named_list_price() {
+    let figures = figures(
+        ProviderKind::Surplus,
+        JSON,
+        &completion(SURPLUS_USAGE_UNPRICED),
+        None,
+        Some(GLM_FLASH),
+    );
+    let record = Record::new(
+        "memory-flash",
+        0,
+        "surplus",
+        "glm-5.3-flash",
+        "chat",
+        figures,
+    );
+    log(&record);
+    let json = serde_json::to_value(&record).unwrap();
+    assert_eq!(json["market_source"], "list_price");
+    assert_eq!(MarketSource::Reported.as_str(), "reported");
+    assert_eq!(
+        serde_json::to_value(MarketSource::Reported).unwrap(),
+        "reported"
+    );
 }

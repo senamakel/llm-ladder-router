@@ -897,6 +897,10 @@ async fn choose(
 /// The caller's response is already built and is not touched: the answer it
 /// was built from is moved onto a task of its own, read there for its figures,
 /// logged, and queued for the usage feed if one is running.
+///
+/// The model's list price is read from the price table on that task too, and
+/// only while the table's snapshot is fresh: a stale price is no better a
+/// basis for a market cost than for admitting a seller.
 fn observe(
     meter: stream::Meter,
     kind: crate::config::ProviderKind,
@@ -908,8 +912,9 @@ fn observe(
             dispatched.content_type.as_deref(),
             &dispatched.body,
             dispatched.buyer_cost_micro,
+            None,
         );
-        meter.record(figures);
+        meter.record(kind, figures);
     });
 }
 
@@ -935,6 +940,8 @@ fn log_served(name: &str, chosen: &Chosen, skipped: usize, session: Option<&str>
 /// Where a call served by `chosen` records its usage.
 fn meter_for(state: &State, ladder: &crate::config::Ladder, chosen: &Chosen) -> stream::Meter {
     stream::Meter {
+        prices: state.prices.clone(),
+        stale_after: state.config.pricing.stale_after,
         feed: state.usage.clone(),
         ladder: ladder.name.clone(),
         surface: surface_name(ladder.surface),

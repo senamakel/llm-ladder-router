@@ -139,11 +139,35 @@ fn invalid(field: &str, reason: &'static str) -> Error {
     }
 }
 
-/// What one upstream call cost, as far as its response says.
+/// Where a call's market cost came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketSource {
+    /// The upstream stated it in its own answer.
+    Reported,
+    /// The upstream did not, so it was worked out from the reported token
+    /// counts and the model's list price in the price table.
+    ListPrice,
+}
+
+impl MarketSource {
+    /// The name this source is posted and logged under.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reported => "reported",
+            Self::ListPrice => "list_price",
+        }
+    }
+}
+
+/// What one upstream call cost.
 ///
-/// Every field is `None` when the response did not carry it. Nothing is
-/// estimated: a figure here is one the upstream reported, never one the router
-/// worked out from a price list.
+/// Every field is `None` when it is not known. Tokens and the charge are only
+/// ever what the upstream reported. The market cost is too, unless
+/// [`Figures::market_source`] says it was worked out from the model's list
+/// price — and then only from reported token counts and a price the
+/// marketplace published.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Figures {
     /// Input tokens billed.
@@ -154,6 +178,8 @@ pub struct Figures {
     pub actual_usd: Option<f64>,
     /// The market (list) cost of the same call, in USD.
     pub market_usd: Option<f64>,
+    /// Where [`Figures::market_usd`] came from; `None` exactly when it is.
+    pub market_source: Option<MarketSource>,
 }
 
 impl Figures {
@@ -169,8 +195,31 @@ impl Figures {
             prompt_tokens: later.prompt_tokens.or(self.prompt_tokens),
             completion_tokens: later.completion_tokens.or(self.completion_tokens),
             actual_usd: later.actual_usd.or(self.actual_usd),
+            // The source travels with the figure it describes.
             market_usd: later.market_usd.or(self.market_usd),
+            market_source: if later.market_usd.is_some() {
+                later.market_source
+            } else {
+                self.market_source
+            },
         }
+    }
+
+    /// These figures with a missing market cost worked out from a list price.
+    ///
+    /// A reported market cost always wins. Without one, the cost is the
+    /// reported token counts at `list_price`, marked as such; with no list
+    /// price, or a token count missing, it stays unknown.
+    #[must_use]
+    pub fn priced_at(mut self, list_price: Option<crate::pricing::ListPrice>) -> Self {
+        if self.market_usd.is_none()
+            && let Some(cost) =
+                list_price.and_then(|list| list.cost(self.prompt_tokens, self.completion_tokens))
+        {
+            self.market_usd = Some(cost);
+            self.market_source = Some(MarketSource::ListPrice);
+        }
+        self
     }
 }
 
@@ -204,6 +253,9 @@ pub struct Record {
     pub actual_usd: Option<f64>,
     /// The market cost of the same call, in USD, or `null` when unknown.
     pub market_usd: Option<f64>,
+    /// Where `market_usd` came from — `reported` by the upstream, or worked
+    /// out at the model's `list_price` — or `null` when it is unknown.
+    pub market_source: Option<MarketSource>,
 }
 
 impl Record {
@@ -230,6 +282,7 @@ impl Record {
             completion_tokens: figures.completion_tokens,
             actual_usd: figures.actual_usd,
             market_usd: figures.market_usd,
+            market_source: figures.market_source,
         }
     }
 }

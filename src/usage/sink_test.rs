@@ -13,7 +13,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 
 use super::*;
-use crate::usage::Figures;
+use crate::usage::{Figures, MarketSource};
 
 /// What the loopback sink saw.
 #[derive(Default)]
@@ -95,6 +95,7 @@ fn record(rung: usize) -> Record {
             completion_tokens: Some(16),
             actual_usd: Some(0.0),
             market_usd: Some(0.000_009_95),
+            market_source: Some(MarketSource::Reported),
         },
     )
 }
