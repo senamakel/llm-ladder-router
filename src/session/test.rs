@@ -141,3 +141,51 @@ fn every_rejection_reason_reads_as_a_sentence() {
         assert_eq!(reason.to_string(), expected);
     }
 }
+
+#[test]
+fn a_keyless_conversation_is_named_by_its_system_prompt_and_ladder() {
+    let body = |model: &str, system: &str, user: &str| {
+        serde_json::json!({ "model": model, "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user },
+        ]})
+    };
+    let first = super::prefix_session(&body("flash", "You build factories.", "turn 1")).unwrap();
+    assert!(first.starts_with("prefix-"));
+    // Later turns of the same conversation keep the key...
+    assert_eq!(
+        super::prefix_session(&body("flash", "You build factories.", "turn 2")),
+        Some(first.clone())
+    );
+    // ...and a different prompt or ladder gets its own.
+    assert_ne!(
+        super::prefix_session(&body("flash", "You review code.", "turn 1")),
+        Some(first.clone())
+    );
+    assert_ne!(
+        super::prefix_session(&body("reasoning", "You build factories.", "turn 1")),
+        Some(first)
+    );
+}
+
+#[test]
+fn every_surfaces_system_prompt_names_a_prefix() {
+    let developer = serde_json::json!({ "messages": [{ "role": "developer", "content": "d" }] });
+    let anthropic =
+        serde_json::json!({ "system": [{ "type": "text", "text": "s" }], "messages": [] });
+    let responses = serde_json::json!({ "instructions": "i", "input": "hi" });
+    for body in [developer, anthropic, responses] {
+        assert!(super::prefix_session(&body).is_some(), "{body}");
+    }
+}
+
+#[test]
+fn a_body_without_a_system_prompt_names_no_prefix() {
+    let body =
+        serde_json::json!({ "model": "flash", "messages": [{ "role": "user", "content": "hi" }] });
+    assert_eq!(super::prefix_session(&body), None);
+    assert_eq!(
+        super::prefix_session(&serde_json::json!({ "system": null })),
+        None
+    );
+}

@@ -503,3 +503,186 @@ async fn a_ladder_whose_only_rung_fails_explains_itself() {
         "{skipped:?}"
     );
 }
+
+/// A router that refuses one system prompt, for the refusal tests below.
+fn refusing_state() -> State {
+    state_with(
+        "bind = \"127.0.0.1:6969\"\n\n[refuse]\nsystem_prefixes = [\"You are a synthesis engine\"]",
+    )
+}
+
+#[tokio::test]
+async fn a_refused_system_prompt_never_reaches_a_rung() {
+    let state = refusing_state();
+    refresh_credits_once(&state).await;
+
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash", "messages": [
+            { "role": "system", "content": "You are a synthesis engine. Given a group..." },
+            { "role": "user", "content": "the private text" }
+        ]}),
+        Wire::OpenAi,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    // No rung was attempted, and the refusal echoes nothing from the request.
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["error"]["skipped"].as_array().unwrap().len(), 0);
+    assert!(!text.contains("private text"), "{text}");
+    assert!(!text.contains("synthesis"), "{text}");
+}
+
+#[tokio::test]
+async fn an_unrefused_prompt_still_walks_the_ladder() {
+    let state = refusing_state();
+    refresh_credits_once(&state).await;
+
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash", "messages": [
+            { "role": "system", "content": "You are a precise extraction engine." }
+        ]}),
+        Wire::OpenAi,
+    )
+    .await;
+
+    // The rung is tried and fails at the closed port: the request was let through.
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn refusal_runs_after_authentication() {
+    let state = state_with(
+        "api_key = \"s3cret\"\n\n[refuse]\nsystem_prefixes = [\"You are a synthesis engine\"]",
+    );
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "flash", "messages": [
+            { "role": "system", "content": "You are a synthesis engine." }
+        ]}),
+        Wire::OpenAi,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// A loopback Surplus whose chat completions stream back a final usage chunk,
+/// and a loopback usage sink that keeps every batch posted to it.
+async fn surplus_and_sink() -> (
+    String,
+    String,
+    Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+) {
+    use axum::routing::post;
+
+    const STREAM: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n\
+        data: {\"choices\":[],\"usage\":{\"prompt_tokens\":13,\"completion_tokens\":16,\"total_tokens\":29,\"cost\":0,\"is_byok\":true,\"cost_details\":{\"upstream_inference_cost\":0.00000995},\"buyer_cost_micro\":0}}\n\n\
+        data: [DONE]\n\n";
+
+    let upstream = axum::Router::new().route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                STREAM,
+            )
+        }),
+    );
+    let batches = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorder = batches.clone();
+    let sink = axum::Router::new().route(
+        "/usage",
+        post(move |Json(body): Json<serde_json::Value>| {
+            let recorder = recorder.clone();
+            async move {
+                recorder.lock().unwrap().push(body);
+                Json(serde_json::json!({ "accepted": 1 }))
+            }
+        }),
+    );
+
+    let mut urls = Vec::new();
+    for app in [upstream, sink] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        urls.push(format!("http://{}", listener.local_addr().unwrap()));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    }
+    let sink_url = format!("{}/usage", urls.pop().unwrap());
+    (urls.pop().unwrap(), sink_url, batches)
+}
+
+#[tokio::test]
+async fn a_served_stream_is_relayed_unchanged_and_its_cost_reaches_the_sink() {
+    let (upstream, sink_url, batches) = surplus_and_sink().await;
+    let config = Config::parse(&format!(
+        r#"
+        [providers.surplus]
+        kind = "surplus"
+        base_url = "{upstream}"
+        api_key_env = "LADDER_TEST_UNSET_KEY"
+
+        [usage_sink]
+        url = "{sink_url}"
+        token_env = "LADDER_TEST_UNSET_USAGE_TOKEN"
+        max_batch = 1
+
+        [[ladders]]
+        name = "memory-flash"
+          [[ladders.rungs]]
+          provider = "surplus"
+          model = "glm-5.3-flash"
+        "#
+    ))
+    .unwrap();
+    let credentials = BTreeMap::from([("surplus".to_string(), "test-key".to_string())]);
+    let (_, mut state) = build_with_credentials(config, &credentials).unwrap();
+    // The token variable is unset, so the router left the feed off; a test
+    // supplies the token itself rather than touching the environment.
+    assert!(state.usage.is_none());
+    let feed =
+        crate::usage::Feed::new(state.config.usage_sink.as_ref().unwrap(), "feed-token").unwrap();
+    feed.start();
+    state.usage = Some(feed);
+
+    let response = route(
+        state,
+        &HeaderMap::new(),
+        serde_json::json!({ "model": "memory-flash", "stream": true, "messages": [] }),
+        Wire::OpenAi,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    // The caller gets the stream byte for byte, usage chunk included.
+    assert!(body.starts_with(b"data: {\"choices\":[{\"delta\""));
+    assert!(body.ends_with(b"data: [DONE]\n\n"));
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while batches.lock().unwrap().is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "no batch posted");
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let record = batches.lock().unwrap()[0]["records"][0].clone();
+    assert_eq!(record["ladder"], "memory-flash");
+    assert_eq!(record["rung"], 0);
+    assert_eq!(record["provider"], "surplus");
+    assert_eq!(record["model"], "glm-5.3-flash");
+    assert_eq!(record["surface"], "chat");
+    assert_eq!(record["prompt_tokens"], 13);
+    assert_eq!(record["completion_tokens"], 16);
+    assert_eq!(record["actual_usd"], 0.0);
+    assert_eq!(record["market_usd"], 0.000_009_95);
+}

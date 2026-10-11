@@ -1458,5 +1458,8 @@ fn rejects_a_blank_alias() {
 fn a_ladder_without_aliases_still_parses() {
     let config = Config::parse(EXAMPLE).unwrap();
 
-    assert!(config.ladder("flash").unwrap().aliases.is_empty());
+    assert_eq!(
+        config.ladder("flash").unwrap().aliases,
+        [] as [std::string::String; 0]
+    );
 }

@@ -57,6 +57,21 @@ min_balance_usd = 0.50
 cooldown = "30s"
 max_cooldown = "5m"
 
+# Every served call is logged with its tokens and what it cost, as the upstream
+# reported them. Uncomment to also post those records, in batches, to a
+# backend. Best-effort: a post that keeps failing is dropped after its retries,
+# and a full queue drops new records, so the feed can never slow a request.
+# The token is named, never inlined; with the variable unset the feed stays off.
+# [usage_sink]
+# url = "https://backend.example/internal/memory/model-usage"
+# token_env = "LADDER_USAGE_FEED_TOKEN"
+# flush_interval = "5s"   # post whatever is queued at least this often
+# max_batch = 100         # and as soon as this many records are waiting
+# queue_size = 10000      # records held before new ones are dropped
+# max_retries = 3         # retries on a transport error, 5xx, 408 or 429
+# retry_backoff = "1s"    # first retry delay, doubled per retry
+# timeout = "10s"         # one post may take this long
+
 # Each marketplace resells many sub-providers whose prices move independently,
 # so each carries its own ceiling that holds no matter which ladder or rung got
 # there. A rung's own ceiling combines with this one by taking the tighter.

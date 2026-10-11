@@ -95,5 +95,67 @@ impl SessionPins {
     }
 }
 
+/// A session for a caller that names none, derived from its stable prefix.
+///
+/// Most clients send no conversation id, and for them a marketplace's prompt
+/// cache is a matter of luck: measured 2026-10-12 on `deepseek-v4.1-flash`, a
+/// six-turn conversation with a 10k-token system prompt hit the cache on half
+/// its warm turns or fewer without a key, and on every one with a key. What a
+/// keyless conversation does carry is the part a cache keeps warm — its system
+/// prompt — so that, with the ladder it asked for, names it. `OpenRouter` does
+/// the same internally, but only sticks to a seller after a hit it happened to
+/// get; a key from the first request is what makes the first hit likely.
+///
+/// Conversations that share a system prompt share the key, which is the point:
+/// they share the cached prefix too. A body with no system prompt (chat
+/// `system`/`developer` message, Anthropic `system`, or responses
+/// `instructions`) gets no session.
+#[must_use]
+pub fn prefix_session(body: &serde_json::Value) -> Option<String> {
+    let system = body
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|messages| {
+            messages.iter().find(|message| {
+                matches!(
+                    message.get("role").and_then(serde_json::Value::as_str),
+                    Some("system" | "developer")
+                )
+            })
+        })
+        .and_then(|message| message.get("content"))
+        .or_else(|| body.get("system"))
+        .or_else(|| body.get("instructions"))
+        .filter(|system| !system.is_null())?;
+    let model = body
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let mut hash = Fnv1a::default();
+    hash.write(model.as_bytes());
+    hash.write(&[0]);
+    hash.write(system.to_string().as_bytes());
+    Some(format!("prefix-{:016x}", hash.0))
+}
+
+/// 64-bit FNV-1a: stable across processes and toolchains, unlike the standard
+/// library's hasher, so a restarted router keeps naming a prefix the same way.
+struct Fnv1a(u64);
+
+impl Default for Fnv1a {
+    fn default() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl Fnv1a {
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+}
+
 #[cfg(test)]
 mod test;

@@ -1072,3 +1072,53 @@ fn only_an_explicit_true_counts_as_a_streaming_request() {
     assert!(!is_streaming(&serde_json::json!({})));
     assert!(!is_streaming(&serde_json::json!(42)));
 }
+
+#[test]
+fn a_session_reaches_surplus_and_openrouter_as_both_sticky_routing_keys() {
+    for kind in [ProviderKind::Surplus, ProviderKind::OpenRouter] {
+        let mut body = serde_json::json!({ "messages": [] });
+        apply_session(&mut body, Some("thread-7"), kind, Wire::OpenAi);
+        assert_eq!(body["session_id"], "thread-7", "{kind:?}");
+        assert_eq!(body["prompt_cache_key"], "thread-7", "{kind:?}");
+    }
+}
+
+#[test]
+fn a_callers_own_session_keys_are_never_overwritten() {
+    let mut body = serde_json::json!({ "session_id": "mine", "prompt_cache_key": "cache" });
+    apply_session(
+        &mut body,
+        Some("router"),
+        ProviderKind::Surplus,
+        Wire::OpenAi,
+    );
+    assert_eq!(body["session_id"], "mine");
+    assert_eq!(body["prompt_cache_key"], "cache");
+}
+
+#[test]
+fn no_session_key_is_sent_without_a_session_elsewhere_or_off_the_chat_surface() {
+    let untouched = |session, kind, wire| {
+        let mut body = serde_json::json!({ "messages": [] });
+        apply_session(&mut body, session, kind, wire);
+        body == serde_json::json!({ "messages": [] })
+    };
+    assert!(untouched(None, ProviderKind::Surplus, Wire::OpenAi));
+    assert!(untouched(Some("s"), ProviderKind::Venice, Wire::OpenAi));
+    assert!(untouched(Some("s"), ProviderKind::Mistral, Wire::OpenAi));
+    assert!(untouched(Some("s"), ProviderKind::Surplus, Wire::Anthropic));
+    assert!(untouched(Some("s"), ProviderKind::Surplus, Wire::Responses));
+    assert!(untouched(
+        Some("s"),
+        ProviderKind::OpenRouter,
+        Wire::Embeddings
+    ));
+}
+
+#[test]
+fn a_streams_sub_provider_is_read_from_its_first_event() {
+    let chunk = b": OPENROUTER PROCESSING\n\ndata: {\"provider\":\"Morph\",\"choices\":[]}\n\n";
+    assert_eq!(super::served_by_in_stream(chunk), Some("Morph".to_string()));
+    assert_eq!(super::served_by_in_stream(b"data: [DONE]\n\n"), None);
+    assert_eq!(super::served_by_in_stream(b": keep-alive\n"), None);
+}

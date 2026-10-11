@@ -13,7 +13,8 @@ mod types;
 pub mod venice;
 
 pub use types::{
-    Dispatched, Disposition, Wire, apply_reasoning_effort, classify_status, parse_retry_after,
+    Dispatched, Disposition, Opened, Streaming, Wire, apply_reasoning_effort, apply_session,
+    classify_status, parse_retry_after,
 };
 
 use crate::config::{Provider, ProviderKind};
@@ -107,6 +108,12 @@ impl Client {
         }
     }
 
+    /// Which marketplace dialect this provider speaks.
+    #[must_use]
+    pub fn kind(&self) -> ProviderKind {
+        self.provider.kind
+    }
+
     /// Whether this provider's credential was present in the environment.
     #[must_use]
     pub fn has_credential(&self) -> bool {
@@ -193,6 +200,62 @@ impl Client {
         wire: Wire,
         body: &serde_json::Value,
     ) -> Result<Dispatched> {
+        let response = self.send(chosen, wire, body).await?;
+        self.dispatched(response).await
+    }
+
+    /// Sends a completion like [`Client::infer`], but leaves a served stream
+    /// open instead of reading it to the end.
+    ///
+    /// Buffering a stream costs a caller nothing in total time, and everything
+    /// in perceived time: every token arrives at once, at the moment the last
+    /// one was generated, so an agent harness sees a frozen turn and a reader
+    /// sees nothing until the answer is complete. The ladder only needs the
+    /// status to decide whether to fail over — every non-2xx is read in full
+    /// and classified exactly as before — so a 2xx event stream is handed back
+    /// with its body still arriving.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Upstream`] if the request could not be completed.
+    pub async fn open(
+        &self,
+        chosen: &Chosen,
+        wire: Wire,
+        body: &serde_json::Value,
+    ) -> Result<Opened> {
+        let response = self.send(chosen, wire, body).await?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let streamed = content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("text/event-stream"));
+        if !(types::is_streaming(body) && response.status().is_success() && streamed) {
+            return self.dispatched(response).await.map(Opened::Complete);
+        }
+        Ok(Opened::Streaming(Streaming {
+            head: Dispatched {
+                status: response.status(),
+                body: Vec::new(),
+                served_by: None,
+                content_type,
+                retry_after: None,
+                buyer_cost_micro: None,
+            },
+            response,
+        }))
+    }
+
+    /// Builds and sends one completion request, returning the raw response.
+    async fn send(
+        &self,
+        chosen: &Chosen,
+        wire: Wire,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
         // Refused before the round trip rather than after it, and asked of
         // every dialect rather than of the one that happens to decline today:
         // the failover loop reads this as the rung's own failure and moves to
@@ -244,16 +307,14 @@ impl Client {
             request = request.header("anthropic-version", "2023-06-01");
         }
 
-        let response = request
+        request
             .json(&body)
             .send()
             .await
             .map_err(|source| Error::Upstream {
                 provider: self.name.clone(),
                 source,
-            })?;
-
-        self.dispatched(response).await
+            })
     }
 
     /// Reads a completed upstream response into a [`Dispatched`].
@@ -270,6 +331,11 @@ impl Client {
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok()),
         );
+        let buyer_cost_micro = response
+            .headers()
+            .get(surplus::HEADER_BUYER_COST_MICRO)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<f64>().ok());
         let bytes = response.bytes().await.map_err(|source| Error::Upstream {
             provider: self.name.clone(),
             source,
@@ -281,6 +347,7 @@ impl Client {
             served_by: served_by(&body),
             content_type,
             retry_after,
+            buyer_cost_micro,
             body,
         })
     }
@@ -369,6 +436,19 @@ fn served_by(body: &[u8]) -> Option<String> {
         .as_str()
         .filter(|name| *name != "unknown")
         .map(str::to_string)
+}
+
+/// The sub-provider named by the first event of a stream that carries one.
+///
+/// A streamed answer states its serving provider on every chunk, the same
+/// `provider` field a buffered one carries once, so the first chunk is enough
+/// to pin a session to it. Comment lines and keep-alives are skipped.
+#[must_use]
+pub fn served_by_in_stream(chunk: &[u8]) -> Option<String> {
+    chunk
+        .split(|byte| *byte == b'\n')
+        .filter_map(|line| line.strip_prefix(b"data:"))
+        .find_map(|data| served_by(data.trim_ascii()))
 }
 
 #[cfg(test)]

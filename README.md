@@ -441,6 +441,9 @@ Identify a conversation with the `x-ladder-session` header, or let the router us
 what your client already sends. Claude Code's `x-claude-code-session-id` and
 Codex's `session-id`, `thread-id`, or `prompt_cache_key` are recognized directly;
 generic clients can use OpenAI's `user` field or Anthropic's `metadata.user_id`.
+A request carrying none of these is named by its system prompt and ladder
+(`prefix-<hash>`), so a keyless client's conversation still lands on the seller
+holding its cached prefix.
 Responses carry `x-ladder-session` and `x-ladder-pinned`, and a dropped pin is
 logged with the reason.
 
@@ -456,6 +459,114 @@ One subtlety worth knowing: a marketplace names the sub-provider that served in
 one vocabulary and accepts steering in another — `OpenRouter` reports
 `DigitalOcean` but routes on `digitalocean`, and a quantized endpoint answers to
 `deepinfra/fp8`. The router resolves one to the other, so a pin actually lands.
+
+Inside a marketplace the pin cannot reach the seller itself: Surplus resells
+through OpenRouter, so the provider that served (`Morph`, `BaseTen`, ...) is two
+hops away. What does reach it is the conversation's identity, so on chat
+completions to Surplus and OpenRouter the session also travels as `session_id`
+and `prompt_cache_key` — the keys OpenRouter's sticky routing reads, and which
+OpenAI-style sellers use for their own caches. A caller's own values always win.
+
+## Streaming
+
+A streamed completion is relayed as it arrives. The ladder decides failover on
+the upstream's status, so every non-2xx answer is still read in full and
+classified as before, while a 2xx event stream is handed to the caller chunk by
+chunk. The first chunk is read before the response starts, so its sub-provider
+is stamped on `x-ladder-sub-provider` and pinned like a buffered answer's; usage
+is read off the same bytes and recorded when the stream ends or the caller
+hangs up. A stream that fails after its first byte cannot move to another rung —
+the caller already has part of an answer — so it reaches the caller as it is.
+
+## Counting callers per request
+
+One router usually fronts several callers, and an upstream request is expected
+to belong to exactly one of them. Whether that holds is decided by whatever
+builds the request — often an application the operator does not control — and a
+router that forwards bodies cannot normally tell. Batching is the usual way it
+stops holding: a client that groups several callers' texts into one embeddings
+`input` array sends them to the marketplace in a single call.
+
+Give the router the prefix your caller identities share and it reports how many
+**distinct** ones each request carries. One is the ordinary case; more than one
+means a single upstream call mixed several callers, which is worth knowing.
+
+```toml
+[markers]
+prefix = "acct-"       # tokens starting with this are caller identities
+warn_above = 1         # warn when one request carries more than this
+scan_cap = 16          # stop counting a body past this many
+```
+
+Every request logs `markers=<n>`, and one above `warn_above` logs a warning
+naming the ladder and the count. A run of `markers=0` means the caller stopped
+labelling its requests, which is a different problem from the feature being off.
+
+**Only the number is recorded.** The matched tokens are never logged, returned
+or stored, and neither is any part of the body — an operator investigating a
+mixed request gets a count and somewhere to look, not a copy of the content.
+Counting is off entirely unless `prefix` is set, and no body is scanned then.
+
+## Refusing requests by system prompt
+
+Some requests should never leave the router: a caller's background job that was
+meant to be switched off, say, and must stay off even if the caller's own setting
+drifts back on. They are usually recognisable by a fixed instruction at the
+start of the system prompt, and the router can turn them away by that alone.
+
+```toml
+[refuse]
+system_prefixes = ["You are a summarisation engine"]
+```
+
+A chat request (any of the three chat wires) whose system prompt starts with a
+listed prefix is answered `403` before a ladder is looked up, so no provider is
+called and nothing is billed. Matching is case-sensitive, on the start of the
+prompt only, after leading whitespace; a blank entry is ignored rather than
+refusing everything. The log line names the ladder and the index of the rule
+that matched, never the prompt or any other part of the request. Embeddings,
+image and video requests are never refused here.
+
+## Usage feed
+
+Every call a rung serves is logged once with what it cost — `ladder`, `rung`,
+`provider`, `model`, `surface`, `prompt_tokens`, `completion_tokens`,
+`actual_usd` (what the account was charged) and `market_usd` (the list price of
+the same call). The figures are read from the upstream's own answer, after the
+caller's response is built and on a task of its own, so reading them never
+delays or alters what the caller receives. Never any prompt or completion text.
+
+| Provider | `actual_usd` | `market_usd` |
+| --- | --- | --- |
+| Surplus | `usage.buyer_cost_micro` ÷ 10⁶, else the `x-si-buyer-cost-micro` header | `usage.cost_details.upstream_inference_cost` |
+| `OpenRouter` | `usage.cost` | `usage.cost` |
+| direct providers | unknown | unknown |
+
+A streamed answer is read through an incremental tap that holds one line at a
+time and parses only the `data:` events naming `usage` — the final chunk on a
+chat stream, `response.completed` on Responses, `message_start` and
+`message_delta` on Anthropic. It reads the same bytes the caller is handed
+(today the router reads an upstream answer in full before relaying it, stream
+or not; the tap adds no buffering of its own). Anything a response does not
+state is `null`, never estimated.
+
+To also post the records somewhere, add a `[usage_sink]` (see
+`config.example.toml` for every knob):
+
+```toml
+[usage_sink]
+url = "https://backend.example/internal/memory/model-usage"
+token_env = "LADDER_USAGE_FEED_TOKEN"   # bearer token, read from the environment
+```
+
+Records are batched (`max_batch`, `flush_interval`) and posted as
+`{"records": [...]}` with `Authorization: Bearer <token>`; each carries a random
+v4 `id` and an RFC 3339 `at`, so a receiver can ignore a batch a retry repeats.
+Delivery is best-effort: a transport error, 5xx, 408 or 429 is retried with
+doubling backoff up to `max_retries` times and then dropped with a warning; any
+other refusal is dropped at once; a full queue (`queue_size`) drops new records
+and logs how many on the next flush. Without the section, or with the token
+variable unset, nothing is posted and nothing else changes.
 
 ## Direct providers
 

@@ -223,6 +223,17 @@ upstream, not the seller that was matched. Local order-book filtering is
 therefore a sound way to *skip* a rung that clearly cannot fit, but it is not a
 guarantee about what the request will cost — only `/min{N}/` is.
 
+### Prompt caches stay warm only through a session key
+
+Measured 2026-10-12 on `deepseek-v4.1-flash` with a 10k-token prefix: repeat
+calls on one seller read 8,960–10,368 cached tokens, and a call that hopped
+sellers read none and ran up to three times slower. `provider_order` naming the
+terminal seller (`["BaseTen"]`) did not move a `Morph`-served conversation —
+those names are OpenRouter's, behind `x-si-provider-family: openrouter`, not
+Surplus families. The chat surface passes unknown body fields through, and a
+fresh `prompt_cache_key` started cold and then hit, so the key reaches the
+seller; OpenRouter keys sticky routing on `session_id`, then `prompt_cache_key`.
+
 ### The `developer` role is rejected on every surface
 
 Surplus's request schema predates the `developer` role and 400s on it:
