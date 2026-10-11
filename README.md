@@ -422,6 +422,22 @@ to re-test.
 A parked rung is skipped exactly as a priced-out one is, and says so in the 502
 body: `rate limited, retry in 12s`.
 
+## Context windows
+
+`GET /v1/models` lists each ladder with a `context_length`: the ladder's own
+`context_length` setting if it has one, else the smallest window the
+marketplaces list for its rungs' models (Surplus's model listing, OpenRouter's
+endpoints), since any rung may serve. Agent harnesses size their context
+management by it. One that cannot learn a window has to assume the worst —
+OpenHuman's assumption was to rewrite its history on every turn, which cost the
+prompt cache on every call.
+
+```toml
+[[ladders]]
+name = "flash"
+context_length = 131072   # optional: advertise less than the models allow
+```
+
 ## Session pinning
 
 Marketplaces bill cached prompt tokens at a fraction of the normal rate, but a
