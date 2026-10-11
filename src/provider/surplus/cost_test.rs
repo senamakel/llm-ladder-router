@@ -66,18 +66,21 @@ fn an_event_split_across_chunks_is_stamped_once_whole() {
     let mut stamper = SseStamper::default();
     let (head, tail) = USAGE_EVENT.split_at(30);
     // Half an event is held back rather than relayed half-stamped.
-    assert_eq!(stamper.feed(head.as_bytes()), b"");
+    assert_eq!(stamper.feed(head.as_bytes()), [] as [u8; 0]);
     let out = stamper.feed(tail.as_bytes());
     let event: serde_json::Value =
         serde_json::from_slice(&out["data: ".len()..out.len() - 1]).unwrap();
     assert_eq!(event["usage"]["cost"], 0.000_004);
-    assert_eq!(stamper.finish(), b"");
+    assert_eq!(stamper.finish(), [] as [u8; 0]);
 }
 
 #[test]
 fn a_stream_ending_without_a_newline_is_still_released_and_stamped() {
     let mut stamper = SseStamper::default();
-    assert_eq!(stamper.feed(USAGE_EVENT.trim_end().as_bytes()), b"");
+    assert_eq!(
+        stamper.feed(USAGE_EVENT.trim_end().as_bytes()),
+        [] as [u8; 0]
+    );
     let out = stamper.finish();
     let event: serde_json::Value = serde_json::from_slice(&out["data: ".len()..]).unwrap();
     assert_eq!(event["usage"]["cost"], 0.000_004);
