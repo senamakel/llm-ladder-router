@@ -200,12 +200,13 @@ pub async fn serve_with_credentials(
 /// Advertises each ladder as if it were a model, so existing clients can
 /// discover them with no special support.
 async fn list_models(AxumState(state): AxumState<State>) -> Json<serde_json::Value> {
+    let prices = state.prices.read().await;
     let data: Vec<serde_json::Value> = state
         .config
         .ladders
         .iter()
         .map(|ladder| {
-            serde_json::json!({
+            let mut entry = serde_json::json!({
                 "id": ladder.name,
                 "object": "model",
                 "owned_by": "llm-ladder-router",
@@ -217,10 +218,29 @@ async fn list_models(AxumState(state): AxumState<State>) -> Json<serde_json::Val
                 // one of them can see it is served rather than concluding the
                 // model is gone.
                 "aliases": ladder.aliases,
-            })
+            });
+            // The window a client can size its context by, under the name
+            // OpenAI-compatible listings use for it.
+            if let Some(window) = context_length(ladder, &prices) {
+                entry["context_length"] = window.into();
+            }
+            entry
         })
         .collect();
     Json(serde_json::json!({ "object": "list", "data": data }))
+}
+
+/// The context window a ladder advertises: its configured one, else the
+/// smallest any of its rungs' models lists, since any rung may serve.
+fn context_length(ladder: &crate::config::Ladder, prices: &PriceTable) -> Option<u64> {
+    ladder.context_length.filter(|tokens| *tokens > 0).or_else(|| {
+        ladder
+            .rungs
+            .iter()
+            .filter_map(|rung| prices.get(&rung.provider, &rung.model))
+            .filter_map(|model| model.context_length)
+            .min()
+    })
 }
 
 /// The `OpenAI`-compatible entry point.

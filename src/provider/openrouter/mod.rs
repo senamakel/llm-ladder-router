@@ -34,6 +34,9 @@ struct Endpoint {
     /// Negative values mark a deranked or disabled endpoint.
     #[serde(default)]
     status: i64,
+    /// The endpoint's context window in tokens.
+    #[serde(default)]
+    context_length: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +72,16 @@ pub fn parse_endpoints(body: &[u8]) -> Result<ModelPrices> {
             what: "endpoints".to_string(),
         })?;
 
+    // Any usable endpoint may serve, so the window a caller can rely on is
+    // the smallest of theirs.
+    let context_length = envelope
+        .data
+        .endpoints
+        .iter()
+        .filter(|endpoint| endpoint.status >= 0)
+        .filter_map(|endpoint| endpoint.context_length)
+        .filter(|tokens| *tokens > 0)
+        .min();
     let offers = envelope
         .data
         .endpoints
@@ -83,7 +96,7 @@ pub fn parse_endpoints(body: &[u8]) -> Result<ModelPrices> {
         })
         .collect();
 
-    Ok(ModelPrices::new(offers))
+    Ok(ModelPrices::new(offers).with_context_length(context_length))
 }
 
 /// Parses a credits payload into the remaining balance in USD.

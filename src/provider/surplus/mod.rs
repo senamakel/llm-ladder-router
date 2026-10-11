@@ -199,6 +199,26 @@ pub fn parse_balance(body: &[u8]) -> Result<f64> {
 
 /// The path a model's order book lives at, relative to the base URL.
 #[must_use]
+pub fn model_path(model: &str) -> String {
+    format!("/v1/models/{model}")
+}
+
+/// A model's context window from its `/v1/models/{model}` listing.
+///
+/// The order book prices a model but does not size it; the model listing
+/// does, as `context_length`. `None` when the body is not a listing or names
+/// no window (Surplus lists `0` for a model it has no window for).
+#[must_use]
+pub fn parse_context_length(body: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()?
+        .get("context_length")?
+        .as_u64()
+        .filter(|tokens| *tokens > 0)
+}
+
+/// `GET /api/markets/{model}`, the model's order book.
+#[must_use]
 pub fn order_book_path(model: &str) -> String {
     format!("/api/markets/{model}")
 }
