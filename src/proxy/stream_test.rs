@@ -110,6 +110,8 @@ async fn sink() -> (Feed, Arc<Mutex<Vec<serde_json::Value>>>) {
 
 fn meter(feed: Option<Feed>) -> Meter {
     Meter {
+        prices: Arc::new(tokio::sync::RwLock::new(crate::pricing::PriceTable::new())),
+        stale_after: Duration::from_secs(60),
         feed,
         ladder: "flash".to_string(),
         surface: "chat",
@@ -233,4 +235,68 @@ async fn a_stream_that_ends_before_its_first_chunk_is_relayed_empty() {
 #[test]
 fn an_unrelayable_stream_is_a_bad_gateway() {
     assert_eq!(unrelayable().status(), axum::http::StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn a_finished_surplus_stream_is_priced_at_the_fresh_list_price() {
+    let (url, upstream) = gated_upstream().await;
+    let (feed, batches) = sink().await;
+    let meter = meter(Some(feed));
+    meter.prices.write().await.insert(
+        "surplus",
+        "deepseek-v4.1-flash",
+        crate::pricing::ModelPrices::new(Vec::new()).with_list_price(Some(
+            crate::pricing::ListPrice {
+                prompt_per_1m: 1.0,
+                completion_per_1m: 2.0,
+            },
+        )),
+    );
+    upstream.send(USAGE).unwrap();
+    drop(upstream);
+    let response = relay(opened(&url).await, ProviderKind::Surplus, meter, None).await;
+    axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let record = first_record(&batches).await;
+    assert_eq!(record["market_source"], "list_price");
+    assert_eq!(record["market_usd"], 45.0 / 1_000_000.0);
+}
+
+#[tokio::test]
+async fn the_usage_meter_only_prices_surplus_with_a_fresh_snapshot() {
+    for (kind, stale, expected) in [
+        (ProviderKind::Surplus, false, Some(45.0 / 1_000_000.0)),
+        (ProviderKind::Surplus, true, None),
+        (ProviderKind::OpenRouter, false, None),
+    ] {
+        let (feed, batches) = sink().await;
+        let meter = meter(Some(feed));
+        let mut snapshot = crate::pricing::ModelPrices::new(Vec::new()).with_list_price(Some(
+            crate::pricing::ListPrice {
+                prompt_per_1m: 1.0,
+                completion_per_1m: 2.0,
+            },
+        ));
+        if stale {
+            snapshot.fetched_at = std::time::Instant::now()
+                .checked_sub(Duration::from_secs(120))
+                .expect("the test clock supports a snapshot two minutes old");
+        }
+        meter
+            .prices
+            .write()
+            .await
+            .insert(&meter.provider, &meter.model, snapshot);
+        meter.record(
+            kind,
+            Figures {
+                prompt_tokens: Some(13),
+                completion_tokens: Some(16),
+                ..Figures::default()
+            },
+        );
+        let record = first_record(&batches).await;
+        assert_eq!(record["market_usd"], serde_json::json!(expected));
+    }
 }

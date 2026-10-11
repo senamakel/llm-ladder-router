@@ -51,11 +51,43 @@ impl Offer {
     }
 }
 
+/// A model's undiscounted list price per token, USD per million tokens.
+///
+/// What the market charges before any seller's discount: the reference price
+/// a marketplace quotes its offers against, and the price a call is worth when
+/// the marketplace does not say what it was worth itself.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ListPrice {
+    /// Input price, USD per million tokens.
+    pub prompt_per_1m: f64,
+    /// Output price, USD per million tokens.
+    pub completion_per_1m: f64,
+}
+
+impl ListPrice {
+    /// What a call of this many tokens costs at this price, in USD.
+    ///
+    /// `None` unless both counts are known: pricing a call whose output was
+    /// not reported as if it had none would understate it.
+    #[must_use]
+    pub fn cost(&self, prompt_tokens: Option<u64>, completion_tokens: Option<u64>) -> Option<f64> {
+        let tokens = |count: Option<u64>| count.and_then(|count| u32::try_from(count).ok());
+        let (prompt, completion) = (tokens(prompt_tokens)?, tokens(completion_tokens)?);
+        Some(
+            (f64::from(prompt) * self.prompt_per_1m
+                + f64::from(completion) * self.completion_per_1m)
+                / 1_000_000.0,
+        )
+    }
+}
+
 /// Every offer for one model on one provider, as of one moment.
 #[derive(Debug, Clone)]
 pub struct ModelPrices {
     /// The offers, in the order the marketplace returned them.
     pub offers: Vec<Offer>,
+    /// The model's list price per token, when the marketplace publishes one.
+    pub list_price: Option<ListPrice>,
     /// When this snapshot was taken, for staleness checks.
     pub fetched_at: Instant,
 }
@@ -66,8 +98,16 @@ impl ModelPrices {
     pub fn new(offers: Vec<Offer>) -> Self {
         Self {
             offers,
+            list_price: None,
             fetched_at: Instant::now(),
         }
+    }
+
+    /// This snapshot, carrying the model's list price.
+    #[must_use]
+    pub fn with_list_price(mut self, list_price: Option<ListPrice>) -> Self {
+        self.list_price = list_price;
+        self
     }
 
     /// Whether this snapshot is older than the configured tolerance.

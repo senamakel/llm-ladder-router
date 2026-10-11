@@ -31,6 +31,10 @@ use super::types::HEADER_SUB_PROVIDER;
 /// Where one served call's usage figures go once they are known.
 #[derive(Debug, Clone)]
 pub(super) struct Meter {
+    /// The current marketplace price snapshots.
+    pub(super) prices: std::sync::Arc<tokio::sync::RwLock<crate::pricing::PriceTable>>,
+    /// How long a price snapshot remains usable.
+    pub(super) stale_after: std::time::Duration,
     /// The usage feed, when one is configured.
     pub(super) feed: Option<Feed>,
     /// The ladder's own name, not the alias the caller used.
@@ -46,20 +50,35 @@ pub(super) struct Meter {
 }
 
 impl Meter {
-    /// Logs one served call's figures and hands them to the feed.
-    pub(super) fn record(&self, figures: Figures) {
-        let record = Record::new(
-            &self.ladder,
-            self.rung,
-            &self.provider,
-            &self.model,
-            self.surface,
-            figures,
-        );
-        crate::usage::log(&record);
-        if let Some(feed) = &self.feed {
-            feed.push(record);
-        }
+    /// Prices and records one served call off the response's own task.
+    pub(super) fn record(&self, kind: ProviderKind, figures: Figures) {
+        let meter = self.clone();
+        tokio::spawn(async move {
+            let figures = if kind == ProviderKind::Surplus {
+                let list_price = meter
+                    .prices
+                    .read()
+                    .await
+                    .get(&meter.provider, &meter.model)
+                    .filter(|snapshot| !snapshot.is_stale(meter.stale_after))
+                    .and_then(|snapshot| snapshot.list_price);
+                figures.priced_at(list_price)
+            } else {
+                figures
+            };
+            let record = Record::new(
+                &meter.ladder,
+                meter.rung,
+                &meter.provider,
+                &meter.model,
+                meter.surface,
+                figures,
+            );
+            crate::usage::log(&record);
+            if let Some(feed) = &meter.feed {
+                feed.push(record);
+            }
+        });
     }
 }
 
@@ -69,6 +88,7 @@ impl Meter {
 /// that disconnects halfway: the body is dropped either way, and the figures
 /// then describe what was actually relayed.
 struct Metered {
+    kind: ProviderKind,
     tap: Option<SseTap>,
     meter: Meter,
 }
@@ -84,7 +104,7 @@ impl Metered {
 impl Drop for Metered {
     fn drop(&mut self) {
         if let Some(tap) = self.tap.take() {
-            self.meter.record(tap.finish());
+            self.meter.record(self.kind, tap.finish());
         }
     }
 }
@@ -114,6 +134,7 @@ pub(super) async fn relay(
     };
 
     let mut metered = Metered {
+        kind,
         tap: Some(SseTap::new(kind)),
         meter,
     };
