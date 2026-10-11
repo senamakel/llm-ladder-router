@@ -531,6 +531,16 @@ pub struct Ladder {
     /// surface but video.
     #[serde(default = "default_job_confirm_secs")]
     pub job_confirm_secs: u64,
+    /// The context window, in tokens, this ladder advertises on `/v1/models`.
+    ///
+    /// Unset, the router advertises the smallest window the marketplaces list
+    /// for this ladder's rungs, since any rung may serve. Clients size their
+    /// own context management by it: an agent harness that cannot learn a
+    /// model's window has to assume the worst, and `OpenHuman`'s assumes it by
+    /// rewriting its history on every turn, which costs the prompt cache on
+    /// every call. Set it to pin a smaller window than the models allow.
+    #[serde(default)]
+    pub context_length: Option<u64>,
     /// The rungs, tried first to last.
     pub rungs: Vec<Rung>,
     /// An uncapped rung attempted only after every normal rung is unavailable

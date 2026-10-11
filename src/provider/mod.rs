@@ -143,7 +143,17 @@ impl Client {
         let body = self.get(&path).await?;
         match self.provider.kind {
             ProviderKind::OpenRouter => openrouter::parse_endpoints(&body),
-            ProviderKind::Surplus => surplus::parse_order_book(&body),
+            ProviderKind::Surplus => {
+                let prices = surplus::parse_order_book(&body)?;
+                // Best effort: a missing window must not cost the rung its
+                // prices, which are what routing actually needs.
+                let window = self
+                    .get(&surplus::model_path(model))
+                    .await
+                    .ok()
+                    .and_then(|listing| surplus::parse_context_length(&listing));
+                Ok(prices.with_context_length(window))
+            }
             ProviderKind::Mistral | ProviderKind::Venice => Err(self.no_market_data("order book")),
         }
     }

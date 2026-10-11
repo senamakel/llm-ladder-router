@@ -90,6 +90,10 @@ pub struct ModelPrices {
     pub list_price: Option<ListPrice>,
     /// When this snapshot was taken, for staleness checks.
     pub fetched_at: Instant,
+    /// The model's context window in tokens, as the marketplace lists it, when
+    /// it lists one. The smallest a seller of this model accepts, since any of
+    /// them may serve the request.
+    pub context_length: Option<u64>,
 }
 
 impl ModelPrices {
@@ -100,7 +104,18 @@ impl ModelPrices {
             offers,
             list_price: None,
             fetched_at: Instant::now(),
+            context_length: None,
         }
+    }
+
+    /// The same snapshot, carrying the model's context window.
+    ///
+    /// A zero is treated as unlisted: Surplus reports `0` for a model whose
+    /// window it does not know, and a zero window would read as "fits nothing".
+    #[must_use]
+    pub fn with_context_length(mut self, context_length: Option<u64>) -> Self {
+        self.context_length = context_length.filter(|tokens| *tokens > 0);
+        self
     }
 
     /// This snapshot, carrying the model's list price.
