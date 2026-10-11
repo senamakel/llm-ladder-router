@@ -197,7 +197,7 @@ pub fn parse_balance(body: &[u8]) -> Result<f64> {
     }
 }
 
-/// The path a model's order book lives at, relative to the base URL.
+/// The path a model's listing lives at, relative to the base URL.
 #[must_use]
 pub fn model_path(model: &str) -> String {
     format!("/v1/models/{model}")
@@ -217,7 +217,7 @@ pub fn parse_context_length(body: &[u8]) -> Option<u64> {
         .filter(|tokens| *tokens > 0)
 }
 
-/// `GET /api/markets/{model}`, the model's order book.
+/// The path a model's order book lives at, relative to the base URL.
 #[must_use]
 pub fn order_book_path(model: &str) -> String {
     format!("/api/markets/{model}")
