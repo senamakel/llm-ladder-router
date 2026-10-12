@@ -53,10 +53,27 @@ pub struct Server {
     /// The socket address to bind.
     #[serde(default = "Server::default_bind")]
     pub bind: String,
-    /// How long a single upstream attempt may take before the rung is
-    /// considered failed and the ladder advances.
+    /// How long an upstream may go without sending a byte before the attempt
+    /// is considered failed and the ladder advances.
+    ///
+    /// A silence deadline, not a total one. Before streams were relayed as
+    /// they arrive this bounded the whole call, which was the same thing; now
+    /// a total bound would cut a long answer that is still arriving — a
+    /// ten-thousand-token completion runs for over a minute — while a silence
+    /// bound only ends an upstream that has actually stalled. A buffered answer
+    /// sends nothing until it is done, so for it this is still the whole call.
     #[serde(default = "Server::default_request_timeout", with = "humantime_serde")]
     pub request_timeout: Duration,
+    /// How long opening a connection to an upstream may take.
+    ///
+    /// Without its own bound a connection that never opens waits out the whole
+    /// [`Server::request_timeout`], once per rung: measured 2026-10-12, a
+    /// thirty-minute loss of outbound network turned every request into a
+    /// 680–780 s walk down the ladder before it failed. A connection that has
+    /// not opened in this long is not going to, and the next rung deserves the
+    /// time instead.
+    #[serde(default = "Server::default_connect_timeout", with = "humantime_serde")]
+    pub connect_timeout: Duration,
     /// The key callers must present to use this router.
     ///
     /// Accepted as `Authorization: Bearer <key>` or, for the Anthropic surface,
@@ -100,6 +117,10 @@ impl Server {
     fn default_request_timeout() -> Duration {
         Duration::from_secs(120)
     }
+
+    fn default_connect_timeout() -> Duration {
+        Duration::from_secs(10)
+    }
 }
 
 impl Default for Server {
@@ -107,6 +128,7 @@ impl Default for Server {
         Self {
             bind: Self::default_bind(),
             request_timeout: Self::default_request_timeout(),
+            connect_timeout: Self::default_connect_timeout(),
             api_key: None,
             api_key_env: None,
         }

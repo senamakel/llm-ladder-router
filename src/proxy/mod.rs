@@ -64,7 +64,8 @@ pub fn build_with_credentials(
     credentials: &BTreeMap<String, String>,
 ) -> Result<(axum::Router, State)> {
     let http = reqwest::Client::builder()
-        .timeout(config.server.request_timeout)
+        .connect_timeout(config.server.connect_timeout)
+        .read_timeout(config.server.request_timeout)
         .build()
         .map_err(|source| Error::Upstream {
             provider: "router".to_string(),
