@@ -112,10 +112,10 @@ impl Drop for Metered {
 /// Turns a served upstream stream into a response that relays it as it
 /// arrives.
 ///
-/// The first chunk is awaited before returning, so the sub-provider it names
-/// can be stamped on the response — the header the session pin reads — and
-/// a stream that breaks before its first byte still reaches the caller as the
-/// broken stream it is rather than as a hang.
+/// `first` is the chunk [`first_chunk`] already read inside the failover
+/// loop, so the sub-provider it names can be stamped on the response — the
+/// header the session pin reads. A stream that broke before it had to be
+/// stepped past there, not relayed here.
 ///
 /// With a `stamper`, each line is passed through it on the way out so the
 /// charge the marketplace names can be restated where clients read a cost;

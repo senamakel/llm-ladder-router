@@ -2539,7 +2539,7 @@ async fn a_stream_longer_than_the_request_timeout_is_not_cut_while_it_keeps_arri
     let surplus = slow_streaming_surplus(5, std::time::Duration::from_millis(400)).await;
     let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
     let router = start_router(&with_request_timeout(
-        config_for(&surplus, &openrouter, 0.15),
+        &config_for(&surplus, &openrouter, 0.15),
         "1s",
     ))
     .await;
@@ -2567,7 +2567,7 @@ async fn an_upstream_that_goes_silent_still_fails_over() {
     let surplus = slow_streaming_surplus(1, std::time::Duration::from_secs(3)).await;
     let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
     let router = start_router(&with_request_timeout(
-        config_for(&surplus, &openrouter, 0.15),
+        &config_for(&surplus, &openrouter, 0.15),
         "1s",
     ))
     .await;
