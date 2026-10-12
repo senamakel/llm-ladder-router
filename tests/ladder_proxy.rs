@@ -2496,7 +2496,7 @@ async fn a_streamed_surplus_answer_reports_its_charge_as_usage_cost() {
 }
 
 /// Starts a mock Surplus whose chat completions stream `chunks` events, each
-/// after `gap`, and a mock OpenRouter to fail over to.
+/// after `gap`.
 async fn slow_streaming_surplus(chunks: usize, gap: std::time::Duration) -> String {
     let state = MockState {
         behavior: Behavior::Serve("Morph".to_string()),
@@ -2529,7 +2529,7 @@ async fn slow_streaming_surplus(chunks: usize, gap: std::time::Duration) -> Stri
     serve(app).await
 }
 
-fn with_request_timeout(config: String, timeout: &str) -> String {
+fn with_request_timeout(config: &str, timeout: &str) -> String {
     format!("[server]\nrequest_timeout = \"{timeout}\"\n{config}")
 }
 
