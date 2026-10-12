@@ -492,7 +492,15 @@ chunk. The first chunk is read before the response starts, so its sub-provider
 is stamped on `x-ladder-sub-provider` and pinned like a buffered answer's; usage
 is read off the same bytes and recorded when the stream ends or the caller
 hangs up. A stream that fails after its first byte cannot move to another rung —
-the caller already has part of an answer — so it reaches the caller as it is.
+the caller already has part of an answer — so it reaches the caller as it is;
+one that answers 200 and then breaks or stays silent before its first byte is
+a failed rung, and the ladder moves on.
+
+Two deadlines bound an upstream call. `server.connect_timeout` (default 10 s)
+fails a rung whose connection never opens, so a dead network costs seconds per
+rung rather than the whole request timeout. `server.request_timeout` (default
+120 s) is a silence deadline: it ends an upstream that has sent nothing for
+that long, and never cuts a long answer that is still arriving.
 
 ## Counting callers per request
 

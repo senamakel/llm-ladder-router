@@ -788,3 +788,23 @@ async fn an_unpriced_call_is_not_priced_from_a_stale_price_table() {
     assert!(record["market_usd"].is_null(), "{record}");
     assert!(record["market_source"].is_null(), "{record}");
 }
+
+#[tokio::test]
+async fn a_connection_that_never_opens_fails_at_the_connect_deadline() {
+    let server = crate::config::Server {
+        connect_timeout: std::time::Duration::from_millis(300),
+        request_timeout: std::time::Duration::from_secs(30),
+        ..crate::config::Server::default()
+    };
+    let http = upstream_http(&server).unwrap();
+    let started = std::time::Instant::now();
+    // A non-routable address: the SYN goes nowhere and nothing answers, which
+    // is what a lost outbound network looks like from here.
+    let result = http.get("http://10.255.255.1:81/").send().await;
+    assert!(result.is_err());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "waited {:?}; a dead connection must not wait out the request timeout",
+        started.elapsed()
+    );
+}

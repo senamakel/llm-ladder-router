@@ -5,9 +5,14 @@
 
 [server]
 bind = "0.0.0.0:6969"
-# A single upstream attempt that outlives this is treated as a rung failure and
-# the ladder advances.
+# An upstream that sends nothing for this long is treated as a rung failure and
+# the ladder advances. A silence deadline, so a long streamed answer that keeps
+# arriving is never cut; a buffered one sends nothing until done, so for it this
+# is the whole call.
 request_timeout = "120s"
+# A connection that has not opened in this long fails the rung at once, rather
+# than waiting out `request_timeout` on every rung of a dead network.
+connect_timeout = "10s"
 # The key callers must present, as `Authorization: Bearer <key>` or `x-api-key`.
 # Both spellings work on both surfaces.
 #

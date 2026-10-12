@@ -63,13 +63,10 @@ pub fn build_with_credentials(
     config: Config,
     credentials: &BTreeMap<String, String>,
 ) -> Result<(axum::Router, State)> {
-    let http = reqwest::Client::builder()
-        .timeout(config.server.request_timeout)
-        .build()
-        .map_err(|source| Error::Upstream {
-            provider: "router".to_string(),
-            source,
-        })?;
+    let http = upstream_http(&config.server).map_err(|source| Error::Upstream {
+        provider: "router".to_string(),
+        source,
+    })?;
 
     let clients: BTreeMap<String, Client> = config
         .providers
@@ -228,6 +225,18 @@ async fn list_models(AxumState(state): AxumState<State>) -> Json<serde_json::Val
         })
         .collect();
     Json(serde_json::json!({ "object": "list", "data": data }))
+}
+
+/// The HTTP client every upstream call goes through.
+///
+/// Bounded by a connect deadline and a silence deadline, never a total one:
+/// see [`crate::config::Server::request_timeout`] for why a relayed stream
+/// must not be cut while it is still arriving.
+fn upstream_http(server: &crate::config::Server) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(server.connect_timeout)
+        .read_timeout(server.request_timeout)
+        .build()
 }
 
 /// The context window a ladder advertises: its configured one, else the
@@ -1063,9 +1072,19 @@ async fn dispatch(
     };
     let mut dispatched = match opened {
         Ok(Opened::Complete(dispatched)) => dispatched,
-        Ok(Opened::Streaming(open)) => {
+        Ok(Opened::Streaming(mut open)) => {
+            let first = match stream::first_chunk(&mut open).await {
+                Ok(first) => first,
+                // Nothing has reached the caller, so the ladder can still move on.
+                Err(error) => {
+                    return Attempt::Advance {
+                        detail: format!("stream broke before its first byte: {error}"),
+                        kind: Failure::Broke,
+                    };
+                }
+            };
             let stamper = stamps_cost(client, wire).then(Default::default);
-            let response = stream::relay(open, client.kind(), meter, stamper).await;
+            let response = stream::relay(open, first, client.kind(), meter, stamper);
             return Attempt::Served(response, None, None);
         }
         // A transport failure is the upstream's, not the caller's.
