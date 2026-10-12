@@ -120,7 +120,7 @@ impl Drop for Metered {
 /// With a `stamper`, each line is passed through it on the way out so the
 /// charge the marketplace names can be restated where clients read a cost;
 /// see [`crate::provider::surplus::cost`].
-pub(super) async fn relay(
+pub(super) fn relay(
     open: Streaming,
     first: Option<Bytes>,
     kind: ProviderKind,

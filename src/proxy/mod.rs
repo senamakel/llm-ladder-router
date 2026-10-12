@@ -1084,7 +1084,7 @@ async fn dispatch(
                 }
             };
             let stamper = stamps_cost(client, wire).then(Default::default);
-            let response = stream::relay(open, first, client.kind(), meter, stamper).await;
+            let response = stream::relay(open, first, client.kind(), meter, stamper);
             return Attempt::Served(response, None, None);
         }
         // A transport failure is the upstream's, not the caller's.

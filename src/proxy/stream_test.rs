@@ -75,7 +75,7 @@ async fn relay_opened(
     stamper: Option<SseStamper>,
 ) -> axum::response::Response {
     let first = first_chunk(&mut open).await.unwrap();
-    relay(open, first, kind, meter, stamper).await
+    relay(open, first, kind, meter, stamper)
 }
 
 /// A loopback usage sink, and a feed posting every record to it at once.
