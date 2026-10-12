@@ -1072,9 +1072,19 @@ async fn dispatch(
     };
     let mut dispatched = match opened {
         Ok(Opened::Complete(dispatched)) => dispatched,
-        Ok(Opened::Streaming(open)) => {
+        Ok(Opened::Streaming(mut open)) => {
+            let first = match stream::first_chunk(&mut open).await {
+                Ok(first) => first,
+                // Nothing has reached the caller, so the ladder can still move on.
+                Err(error) => {
+                    return Attempt::Advance {
+                        detail: format!("stream broke before its first byte: {error}"),
+                        kind: Failure::Broke,
+                    };
+                }
+            };
             let stamper = stamps_cost(client, wire).then(Default::default);
-            let response = stream::relay(open, client.kind(), meter, stamper).await;
+            let response = stream::relay(open, first, client.kind(), meter, stamper).await;
             return Attempt::Served(response, None, None);
         }
         // A transport failure is the upstream's, not the caller's.

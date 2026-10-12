@@ -122,16 +122,15 @@ impl Drop for Metered {
 /// see [`crate::provider::surplus::cost`].
 pub(super) async fn relay(
     open: Streaming,
+    first: Option<Bytes>,
     kind: ProviderKind,
     meter: Meter,
     stamper: Option<SseStamper>,
 ) -> Response {
-    let Streaming { head, mut response } = open;
-    let first = response.chunk().await;
-    let served_by = match &first {
-        Ok(Some(chunk)) => crate::provider::served_by_in_stream(chunk),
-        _ => None,
-    };
+    let Streaming { head, response } = open;
+    let served_by = first
+        .as_deref()
+        .and_then(crate::provider::served_by_in_stream);
 
     let mut metered = Metered {
         kind,
@@ -140,7 +139,7 @@ pub(super) async fn relay(
     };
     let stamper = Arc::new(Mutex::new(stamper));
     let tail = stamper.clone();
-    let body = futures_util::stream::iter(first.transpose())
+    let body = futures_util::stream::iter(first.map(Ok))
         .chain(response.bytes_stream())
         .map(move |chunk| {
             let bytes = chunk?;
@@ -168,6 +167,19 @@ pub(super) async fn relay(
     builder
         .body(Body::from_stream(body))
         .map_or_else(|_| unrelayable(), IntoResponse::into_response)
+}
+
+/// Reads a served stream's first chunk, before the caller has been sent
+/// anything.
+///
+/// Until this returns the rung can still be stepped past: an upstream that
+/// answers 200 and then goes silent, or drops the connection, is a rung that
+/// failed, and the caller has nothing yet that a second rung's answer would
+/// contradict. Once the first chunk is relayed that choice is gone, so it is
+/// read here, inside the failover loop, and not inside the relay. `None` is a
+/// stream that ended cleanly before sending anything.
+pub(super) async fn first_chunk(open: &mut Streaming) -> reqwest::Result<Option<Bytes>> {
+    open.response.chunk().await
 }
 
 /// Passes one chunk through the stamper, when there is one.
