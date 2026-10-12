@@ -2494,3 +2494,85 @@ async fn a_streamed_surplus_answer_reports_its_charge_as_usage_cost() {
     assert!(text.starts_with("data: {\"provider\":\"Morph\""));
     assert!(text.ends_with("data: [DONE]\n\n"));
 }
+
+/// Starts a mock Surplus whose chat completions stream `chunks` events, each
+/// after `gap`, and a mock OpenRouter to fail over to.
+async fn slow_streaming_surplus(chunks: usize, gap: std::time::Duration) -> String {
+    let state = MockState {
+        behavior: Behavior::Serve("Morph".to_string()),
+        price_per_1m: 0.10,
+        recorded: Arc::new(Mutex::new(Recorded::default())),
+    };
+    let answer = move || async move {
+        let events = futures_util::stream::unfold(0, move |sent| async move {
+            if sent == chunks {
+                return None;
+            }
+            tokio::time::sleep(gap).await;
+            let event = format!(
+                "data: {{\"provider\":\"Morph\",\"choices\":[{{\"delta\":{{\"content\":\"{sent}\"}}}}]}}\n\n"
+            );
+            Some((Ok::<_, std::convert::Infallible>(event), sent + 1))
+        });
+        (
+            [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+            axum::body::Body::from_stream(events),
+        )
+            .into_response()
+    };
+    let app = Router::new()
+        .route("/api/markets/{model}", get(surplus_order_book))
+        .route("/v1/buyer/me", get(surplus_balance))
+        .route("/{prefix}/v1/chat/completions", post(answer))
+        .route("/v1/chat/completions", post(answer))
+        .with_state(state);
+    serve(app).await
+}
+
+fn with_request_timeout(config: String, timeout: &str) -> String {
+    format!("[server]\nrequest_timeout = \"{timeout}\"\n{config}")
+}
+
+#[tokio::test]
+async fn a_stream_longer_than_the_request_timeout_is_not_cut_while_it_keeps_arriving() {
+    // Five events 400 ms apart: two seconds in all, never silent for one.
+    let surplus = slow_streaming_surplus(5, std::time::Duration::from_millis(400)).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&with_request_timeout(
+        config_for(&surplus, &openrouter, 0.15),
+        "1s",
+    ))
+    .await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{router}/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "flash", "stream": true,
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.headers()["x-ladder-provider"], "surplus");
+    let text = response
+        .text()
+        .await
+        .expect("the stream was cut mid-answer");
+    assert_eq!(text.matches("data: ").count(), 5, "{text}");
+}
+
+#[tokio::test]
+async fn an_upstream_that_goes_silent_still_fails_over() {
+    // The first event is three seconds away against a one-second deadline.
+    let surplus = slow_streaming_surplus(1, std::time::Duration::from_secs(3)).await;
+    let (openrouter, _) = mock_openrouter(Behavior::Serve("DeepInfra".to_string()), 0.20).await;
+    let router = start_router(&with_request_timeout(
+        config_for(&surplus, &openrouter, 0.15),
+        "1s",
+    ))
+    .await;
+
+    let response = chat(&router, true).await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-ladder-provider"], "openrouter");
+}

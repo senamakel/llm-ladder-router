@@ -1463,3 +1463,20 @@ fn a_ladder_without_aliases_still_parses() {
         [] as [std::string::String; 0]
     );
 }
+
+#[test]
+fn the_connect_deadline_defaults_to_ten_seconds_and_can_be_set() {
+    assert_eq!(
+        Server::default().connect_timeout,
+        std::time::Duration::from_secs(10)
+    );
+    let config = Config::parse(&EXAMPLE.replace(
+        "request_timeout = \"30s\"",
+        "request_timeout = \"30s\"\nconnect_timeout = \"3s\"",
+    ))
+    .unwrap();
+    assert_eq!(
+        config.server.connect_timeout,
+        std::time::Duration::from_secs(3)
+    );
+}
